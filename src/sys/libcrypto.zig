@@ -177,6 +177,84 @@ const struct_ssl_ctx_st = opaque {};
 pub const SSL_CTX = struct_ssl_ctx_st;
 pub extern fn SSL_CTX_set1_verify_cert_store(ctx: ?*SSL_CTX, store: ?*X509_STORE) c_int;
 
+// BoringSSL ClientHello shaping. These have no OpenSSL equivalent: they exist
+// so an embedder can control exactly what its ClientHello looks like on the
+// wire, which is what network/tls_fingerprint.zig uses them for.
+
+/// TLS 1.2-and-below cipher suites, as a colon-separated preference list. The
+/// three TLS 1.3 suites are fixed in BoringSSL and always offered.
+pub extern fn SSL_CTX_set_cipher_list(ctx: *SSL_CTX, str: [*:0]const u8) c_int;
+
+/// Supported groups (named curves + PQC hybrids), colon-separated, in
+/// preference order. Also determines which key shares are offered.
+pub extern fn SSL_CTX_set1_curves_list(ctx: *SSL_CTX, curves: [*:0]const u8) c_int;
+
+/// The signature_algorithms extension, as raw IANA code points.
+pub extern fn SSL_CTX_set_signing_algorithm_prefs(ctx: *SSL_CTX, prefs: [*]const u16, num_prefs: usize) c_int;
+pub extern fn SSL_CTX_set_verify_algorithm_prefs(ctx: *SSL_CTX, prefs: [*]const u16, num_prefs: usize) c_int;
+
+/// RFC 8701 GREASE: random reserved values in the cipher list, extensions,
+/// supported groups and supported versions. Chrome has sent these since 2016
+/// and their absence is conspicuous.
+pub extern fn SSL_CTX_set_grease_enabled(ctx: *SSL_CTX, enabled: c_int) void;
+
+/// Randomize ClientHello extension order per connection, as Chrome does.
+pub extern fn SSL_CTX_set_permute_extensions(ctx: *SSL_CTX, enabled: c_int) void;
+
+/// ALPN, in wire format (length-prefixed protocol names).
+pub extern fn SSL_CTX_set_alpn_protos(ctx: *SSL_CTX, protos: [*]const u8, protos_len: c_uint) c_int;
+
+/// Advertise support for the signed_certificate_timestamp (18) and
+/// status_request (5) extensions.
+pub extern fn SSL_CTX_enable_signed_cert_timestamps(ctx: *SSL_CTX) void;
+pub extern fn SSL_CTX_enable_ocsp_stapling(ctx: *SSL_CTX) void;
+
+/// Minimum/maximum protocol version, as a TLS*_VERSION constant.
+pub extern fn SSL_CTX_set_min_proto_version(ctx: *SSL_CTX, version: u16) c_int;
+pub extern fn SSL_CTX_set_max_proto_version(ctx: *SSL_CTX, version: u16) c_int;
+
+/// Clears option bits previously set on the context. libcurl turns session
+/// tickets off for every connection it makes; Chrome sends the extension, so
+/// we turn them back on from the CURLOPT_SSL_CTX_FUNCTION hook, which runs
+/// after curl has applied its own options.
+pub extern fn SSL_CTX_clear_options(ctx: *SSL_CTX, options: u32) u32;
+
+pub const SSL_OP_NO_TICKET: u32 = 0x00004000;
+
+// Per-connection (SSL, not SSL_CTX) shaping. libcurl only hands out the
+// SSL_CTX, so these are reached from an info callback fired at
+// SSL_CB_HANDSHAKE_START, which runs before the ClientHello is built.
+pub const SSL = opaque {};
+pub const CRYPTO_BUFFER = opaque {};
+
+pub const SSL_CB_HANDSHAKE_START: c_int = 0x10;
+
+pub const InfoCallback = *const fn (ssl: *const SSL, type_: c_int, value: c_int) callconv(.c) void;
+pub extern fn SSL_CTX_set_info_callback(ctx: *SSL_CTX, cb: InfoCallback) void;
+
+/// ALPS (extension 17613). Enables it for one ALPN protocol.
+pub extern fn SSL_add_application_settings(ssl: *SSL, proto: [*]const u8, proto_len: usize, settings: [*]const u8, settings_len: usize) c_int;
+
+/// GREASE ECH (extension 65037) when no real ECHConfig is available, which
+/// is what Chrome sends for the overwhelming majority of connections.
+pub extern fn SSL_set_enable_ech_grease(ssl: *SSL, enable: c_int) void;
+
+/// Certificate compression (extension 27). BoringSSL calls `decompress` when
+/// a server sends a compressed certificate chain.
+pub const CertDecompressFunc = *const fn (ssl: *SSL, out: **CRYPTO_BUFFER, uncompressed_len: usize, in: [*]const u8, in_len: usize) callconv(.c) c_int;
+pub extern fn SSL_CTX_add_cert_compression_alg(ctx: *SSL_CTX, alg_id: u16, compress: ?*const anyopaque, decompress: ?CertDecompressFunc) c_int;
+
+pub const CERT_COMPRESSION_BROTLI: u16 = 2;
+
+pub extern fn CRYPTO_BUFFER_alloc(out_data: *[*]u8, len: usize) ?*CRYPTO_BUFFER;
+pub extern fn CRYPTO_BUFFER_free(buf: *CRYPTO_BUFFER) void;
+
+pub const BROTLI_DECODER_RESULT_SUCCESS: c_uint = 1;
+pub extern fn BrotliDecoderDecompress(encoded_size: usize, encoded_buffer: [*]const u8, decoded_size: *usize, decoded_buffer: [*]u8) c_uint;
+
+pub const TLS1_2_VERSION: u16 = 0x0303;
+pub const TLS1_3_VERSION: u16 = 0x0304;
+
 /// Returns the desired digest by its name.
 pub fn findDigest(name: []const u8) error{Invalid}!*const EVP_MD {
     if (std.mem.eql(u8, "SHA-256", name)) {

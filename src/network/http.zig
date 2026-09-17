@@ -23,6 +23,7 @@ const Config = @import("../Config.zig");
 const sys_net = @import("../sys/net.zig");
 const libcurl = @import("../sys/libcurl.zig");
 const crypto = @import("../sys/libcrypto.zig");
+const tls_fingerprint = @import("tls_fingerprint.zig");
 
 const IpFilter = @import("IpFilter.zig");
 const Certificates = @import("Certificates.zig");
@@ -485,7 +486,10 @@ pub const Connection = struct {
             try libcurl.curl_easy_setopt(self._easy, .proxy, null);
         }
 
-        // TLS.
+        // TLS. The ClientHello is shaped to match the browser the rest of the
+        // profile claims to be (see network/tls_fingerprint.zig) regardless of
+        // whether certificates are verified: the handshake a server sees must
+        // not change because we happen to be running with verification off.
         if (config.tlsVerifyHost()) {
             // Provide certificate store to connection's SSL_CTX.
             try libcurl.curl_easy_setopt(self._easy, .ssl_ctx_function, &(struct {
@@ -497,6 +501,8 @@ pub const Connection = struct {
                     const ssl_ctx: *crypto.SSL_CTX = @ptrCast(raw_ssl_ctx);
                     const store: *crypto.X509_STORE = @ptrCast(raw_x509_store);
 
+                    tls_fingerprint.apply(ssl_ctx);
+
                     const result = crypto.SSL_CTX_set1_verify_cert_store(ssl_ctx, store);
                     if (result != 1) {
                         return libcurl.CURLE.ABORTED_BY_CALLBACK;
@@ -507,6 +513,19 @@ pub const Connection = struct {
             // Pass our store to CURLOPT_SSL_CTX_FUNCTION.
             try libcurl.curl_easy_setopt(self._easy, .ssl_ctx_data, certificates.store);
         } else {
+            try libcurl.curl_easy_setopt(self._easy, .ssl_ctx_function, &(struct {
+                fn wrap(
+                    _: *libcurl.Curl,
+                    raw_ssl_ctx: *anyopaque,
+                    _: ?*anyopaque,
+                ) callconv(.c) libcurl.CurlCode {
+                    tls_fingerprint.apply(@ptrCast(raw_ssl_ctx));
+                    return libcurl.CURLE.OK;
+                }
+            }).wrap);
+            // No ssl_ctx_data: curl_easy_reset above already cleared it, and
+            // this callback has no store to receive.
+
             try libcurl.curl_easy_setopt(self._easy, .ssl_verify_host, false);
             try libcurl.curl_easy_setopt(self._easy, .ssl_verify_peer, false);
 
