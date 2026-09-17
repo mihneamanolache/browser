@@ -91,7 +91,10 @@ jobs:
       - name: smoke test
         run: |
           BIN=./lightpanda-${{ matrix.arch }}-linux
-          $BIN --version
+          # `version` is a subcommand, not a flag: `--version` exits
+          # UnknownCommand, and a bash -e step dies there before it tests
+          # anything. That typo is why no publish has ever reached the image.
+          $BIN version
           $BIN fetch --fingerprint-list | grep -q "macbook" || (echo "profile table missing" && exit 1)
 
           mkdir -p /tmp/smoke
@@ -161,7 +164,7 @@ jobs:
         run: mv zig-out/bin/lightpanda lightpanda-${{ matrix.arch }}-macos
 
       - name: smoke test
-        run: ./lightpanda-${{ matrix.arch }}-macos --version
+        run: ./lightpanda-${{ matrix.arch }}-macos version
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
