@@ -30,32 +30,28 @@ permissions:
   contents: read
   packages: write
 
+# The Linux and macOS builds are separate JOBS, not two halves of one matrix,
+# because `needs:` is job-level: a single failed matrix entry fails the whole
+# job and skips everything downstream. That is how a macOS runner that would
+# not start -- billing, availability, anything -- took the container image
+# down with it, and the image is the artifact anything actually deploys.
+# Linux now stands alone, and macOS can fail without consequence.
 jobs:
-  build:
+  build-linux:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: linux
-            arch: x86_64
+          - arch: x86_64
             docker_arch: amd64
             runner: ubuntu-22.04
             cpu_flag: -Dcpu=x86_64
-          - os: linux
-            arch: aarch64
+          - arch: aarch64
             docker_arch: arm64
             # apt.llvm.org has no LLVM 23 repo for 22.04; see upstream
             # zig-v8-fork#199. Same reason as release.yml.
             runner: ubuntu-24.04-arm
             cpu_flag: -Dcpu=generic
-          - os: macos
-            arch: aarch64
-            runner: macos-14
-            cpu_flag: ''
-          - os: macos
-            arch: x86_64
-            runner: macos-14-large
-            cpu_flag: ''
 
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -67,7 +63,7 @@ jobs:
 
       - uses: ./.github/actions/install
         with:
-          os: ${{ matrix.os }}
+          os: linux
           arch: ${{ matrix.arch }}
 
       # The snapshot has to be built by the same binary that will embed it.
@@ -76,10 +72,7 @@ jobs:
 
       - name: build
         run: |
-          ORDERFILE=""
-          if [ "${{ matrix.os }}" = "linux" ]; then
-            ORDERFILE="-Dorderfile=orderfile/lightpanda.ld"
-          fi
+          ORDERFILE="-Dorderfile=orderfile/lightpanda.ld"
           zig build \
             -Dsnapshot_path=../../snapshot.bin \
             -Dprebuilt_v8_path=v8/libc_v8.a \
@@ -88,7 +81,7 @@ jobs:
             -Dversion=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
 
       - name: rename
-        run: mv zig-out/bin/lightpanda lightpanda-${{ matrix.arch }}-${{ matrix.os }}
+        run: mv zig-out/bin/lightpanda lightpanda-${{ matrix.arch }}-linux
 
       # Smoke test: a binary that cannot report its own identity is not worth
       # publishing, and this catches a broken snapshot or V8 link immediately.
@@ -96,9 +89,8 @@ jobs:
       # Over HTTP, not file://, which `fetch` does not support. The page is
       # served locally so the test needs no network and cannot flake on one.
       - name: smoke test
-        if: matrix.os == 'linux' || matrix.arch == 'aarch64'
         run: |
-          BIN=./lightpanda-${{ matrix.arch }}-${{ matrix.os }}
+          BIN=./lightpanda-${{ matrix.arch }}-linux
           $BIN --version
           $BIN fetch --fingerprint-list | grep -q "macbook" || (echo "profile table missing" && exit 1)
 
@@ -124,12 +116,61 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: lightpanda-${{ matrix.arch }}-${{ matrix.os }}
-          path: lightpanda-${{ matrix.arch }}-${{ matrix.os }}
+          name: lightpanda-${{ matrix.arch }}-linux
+          path: lightpanda-${{ matrix.arch }}-linux
+          retention-days: 7
+
+  # Raw macOS binaries. Nothing depends on this job, on purpose.
+  #
+  # Only the free arm64 runner: macos-14-large is a paid larger runner, and a
+  # lapsed payment there is what broke the first publish. Add an x86_64 entry
+  # back when that account has billing, and it still cannot block the image.
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-14
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/install
+        with:
+          os: macos
+          arch: ${{ matrix.arch }}
+
+      - name: v8 snapshot
+        run: zig build -Dprebuilt_v8_path=v8/libc_v8.a -Doptimize=ReleaseFast snapshot_creator -- src/snapshot.bin
+
+      - name: build
+        run: |
+          zig build \
+            -Dsnapshot_path=../../snapshot.bin \
+            -Dprebuilt_v8_path=v8/libc_v8.a \
+            -Doptimize=ReleaseFast \
+            -Dversion=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+
+      - name: rename
+        run: mv zig-out/bin/lightpanda lightpanda-${{ matrix.arch }}-macos
+
+      - name: smoke test
+        run: ./lightpanda-${{ matrix.arch }}-macos --version
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lightpanda-${{ matrix.arch }}-macos
+          path: lightpanda-${{ matrix.arch }}-macos
           retention-days: 7
 
   image:
-    needs: build
+    needs: build-linux
     strategy:
       fail-fast: false
       matrix:
