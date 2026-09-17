@@ -1,0 +1,33 @@
+# Runtime image for an already-built lightpanda binary.
+#
+# The repo's main Dockerfile builds from a `git clone` of upstream, which is
+# correct for upstream and wrong for a fork: it would publish upstream's code
+# under our tag no matter what is in the working tree. This one takes a binary
+# the CI has already produced from THIS checkout and does nothing else, which
+# also means the image build is seconds rather than the ~20 minutes a V8 link
+# costs.
+#
+# The binary must match the image's architecture. The publish workflow builds
+# each arch on its own native runner and pushes a single-arch image per arch,
+# then joins them with `docker manifest`, so no emulation is involved.
+#
+#   docker build -f Dockerfile.dist --build-arg BIN=lightpanda-x86_64-linux -t lightpanda .
+
+FROM debian:stable-slim
+
+ARG BIN=lightpanda
+
+RUN apt-get update -yq && \
+    apt-get install -yq --no-install-recommends tini ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY ${BIN} /bin/lightpanda
+RUN chmod +x /bin/lightpanda
+
+EXPOSE 9222/tcp
+
+# lightpanda installs only some signal handlers, and PID 1 has no default
+# SIGTERM handler, so without tini `docker stop` hangs.
+# See https://github.com/krallin/tini#why-tini
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/bin/lightpanda", "serve", "--host", "0.0.0.0", "--port", "9222", "--log-level", "info"]

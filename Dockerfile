@@ -25,9 +25,17 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --fail -L --retry 3 --retry-delay 2 -O https://github.com/jedisct1/minisign/releases/download/${MINISIG}/minisign-${MINISIG}-linux.tar.gz && \
     tar xzf minisign-${MINISIG}-linux.tar.gz -C /
 
-# clone lightpanda
-RUN git clone --depth 1 https://github.com/lightpanda-io/browser.git
+# Build THIS checkout, not upstream.
+#
+# Upstream's Dockerfile does `git clone --depth 1 lightpanda-io/browser` here,
+# which is right for upstream and silently wrong for a fork: it would publish
+# upstream's source under our tag regardless of the working tree. Copying the
+# build context means `docker build .` builds what you actually have.
+#
+# .dockerignore keeps zig-cache/zig-out/.lp-cache out of the context so this
+# does not ship a stale local build into the image.
 WORKDIR /browser
+COPY . .
 
 # install zig
 RUN ZIG=$(grep '\.minimum_zig_version = "' "build.zig.zon" | cut -d'"' -f2) && \

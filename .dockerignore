@@ -1,0 +1,12 @@
+# Build outputs and caches: large, host-specific, and rebuilt inside the image.
+zig-out/
+.zig-cache/
+zig-pkg/
+.lp-cache/
+v8/
+.git/
+
+# Root-level scratch only. NOT a bare *.html glob: that would also drop
+# src/browser/tests/*.html, which are part of the tree.
+/*.log
+/*.html

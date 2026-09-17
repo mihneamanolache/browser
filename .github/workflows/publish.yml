@@ -1,0 +1,186 @@
+name: publish
+
+# Builds this fork and publishes it to the repo's own GitHub Container
+# Registry, for linux/amd64 and linux/arm64, plus raw binaries for macOS.
+#
+# Each architecture builds on its OWN native runner. The obvious alternative --
+# one buildx job with QEMU -- emulates the V8 link step, which turns ~5 minutes
+# into something that routinely exceeds the job timeout. So: native binary per
+# arch, a thin single-arch image per arch (Dockerfile.dist just copies the
+# binary in), then `docker manifest` joins them into one multi-arch tag.
+#
+# Upstream's release.yml pushes to S3 with credentials this fork does not have.
+# This workflow deliberately shares none of that: it needs only GITHUB_TOKEN.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to publish (default: branch or git tag)'
+        required: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: x86_64
+            docker_arch: amd64
+            runner: ubuntu-22.04
+            cpu_flag: -Dcpu=x86_64
+          - os: linux
+            arch: aarch64
+            docker_arch: arm64
+            # apt.llvm.org has no LLVM 23 repo for 22.04; see upstream
+            # zig-v8-fork#199. Same reason as release.yml.
+            runner: ubuntu-24.04-arm
+            cpu_flag: -Dcpu=generic
+          - os: macos
+            arch: aarch64
+            runner: macos-14
+            cpu_flag: ''
+          - os: macos
+            arch: x86_64
+            runner: macos-14-large
+            cpu_flag: ''
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/install
+        with:
+          os: ${{ matrix.os }}
+          arch: ${{ matrix.arch }}
+
+      # The snapshot has to be built by the same binary that will embed it.
+      - name: v8 snapshot
+        run: zig build -Dprebuilt_v8_path=v8/libc_v8.a -Doptimize=ReleaseFast snapshot_creator -- src/snapshot.bin
+
+      - name: build
+        run: |
+          ORDERFILE=""
+          if [ "${{ matrix.os }}" = "linux" ]; then
+            ORDERFILE="-Dorderfile=orderfile/lightpanda.ld"
+          fi
+          zig build \
+            -Dsnapshot_path=../../snapshot.bin \
+            -Dprebuilt_v8_path=v8/libc_v8.a \
+            -Doptimize=ReleaseFast \
+            $ORDERFILE ${{ matrix.cpu_flag }} \
+            -Dversion=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+
+      - name: rename
+        run: mv zig-out/bin/lightpanda lightpanda-${{ matrix.arch }}-${{ matrix.os }}
+
+      # Smoke test: a binary that cannot report its own identity is not worth
+      # publishing, and this catches a broken snapshot or V8 link immediately.
+      - name: smoke test
+        if: matrix.os == 'linux' || matrix.arch == 'aarch64'
+        run: |
+          ./lightpanda-${{ matrix.arch }}-${{ matrix.os }} --version
+          echo '<html><body><pre id=o></pre><script>document.getElementById("o").textContent=navigator.userAgent</script></body></html>' > /tmp/ua.html
+          ./lightpanda-${{ matrix.arch }}-${{ matrix.os }} fetch "file:///tmp/ua.html" --dump html --log-level error | grep -q "Chrome/" \
+            && echo "identity OK" || (echo "identity missing from build" && exit 1)
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lightpanda-${{ matrix.arch }}-${{ matrix.os }}
+          path: lightpanda-${{ matrix.arch }}-${{ matrix.os }}
+          retention-days: 7
+
+  image:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            docker_arch: amd64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            docker_arch: arm64
+            runner: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: lightpanda-${{ matrix.arch }}-linux
+
+      - name: log in to ghcr
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Lowercase: ghcr rejects capitals in a repository name, and
+      # github.repository preserves the owner's casing.
+      - name: image name
+        id: n
+        run: echo "image=$(echo '${{ env.IMAGE }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: build and push per-arch image
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.ref_type == 'tag' && github.ref_name || 'main' }}"
+          fi
+          IMG="${{ steps.n.outputs.image }}"
+          docker build -f Dockerfile.dist \
+            --build-arg BIN=lightpanda-${{ matrix.arch }}-linux \
+            -t "$IMG:${TAG}-${{ matrix.docker_arch }}" \
+            -t "$IMG:${{ github.sha }}-${{ matrix.docker_arch }}" .
+          docker push "$IMG:${TAG}-${{ matrix.docker_arch }}"
+          docker push "$IMG:${{ github.sha }}-${{ matrix.docker_arch }}"
+
+  manifest:
+    needs: image
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: log in to ghcr
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One tag that resolves to the right arch on pull, built from the
+      # per-arch tags the previous job pushed.
+      - name: join into a multi-arch tag
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.ref_type == 'tag' && github.ref_name || 'main' }}"
+          fi
+          IMG=$(echo '${{ env.IMAGE }}' | tr '[:upper:]' '[:lower:]')
+          for T in "$TAG" "${{ github.sha }}"; do
+            docker manifest create "$IMG:$T" \
+              --amend "$IMG:${T}-amd64" \
+              --amend "$IMG:${T}-arm64"
+            docker manifest push "$IMG:$T"
+            echo "pushed $IMG:$T (amd64 + arm64)"
+          done
