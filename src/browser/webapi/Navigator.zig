@@ -36,6 +36,7 @@ const BatteryManager = @import("BatteryManager.zig");
 const ModelContext = @import("ModelContext.zig");
 const StorageManager = @import("StorageManager.zig");
 const Keyboard = @import("Keyboard.zig");
+const napi = @import("navigator_apis.zig");
 const NavigatorUAData = @import("NavigatorUAData.zig");
 const Geolocation = @import("geolocation/Geolocation.zig");
 
@@ -60,6 +61,40 @@ _ua_data: NavigatorUAData = .{},
 _user_activation: UserActivation = .{},
 _keyboard: Keyboard = .{},
 _connection: ?*NetworkInformation = null,
+
+// The Chrome-only surface. Lazy pointers, for the same two reasons
+// _geolocation and _connection are: most pages touch none of them, and a
+// value field here would join the scramble for offset 0 that the guard above
+// polices -- Zig's field order shifts as fields are added, and a JS-visible
+// member landing at offset 0 would alias the Navigator itself. Caching the
+// pointer is what makes `navigator.gpu === navigator.gpu` hold, as it does in
+// Chrome.
+_bluetooth: ?*napi.Bluetooth = null,
+_clipboard: ?*napi.Clipboard = null,
+_credentials: ?*napi.CredentialsContainer = null,
+_devicePosture: ?*napi.DevicePosture = null,
+_gpu: ?*napi.GPU = null,
+_hid: ?*napi.HID = null,
+_ink: ?*napi.Ink = null,
+_locks: ?*napi.LockManager = null,
+_login: ?*napi.NavigatorLogin = null,
+_managed: ?*napi.NavigatorManagedData = null,
+_mediaCapabilities: ?*napi.MediaCapabilities = null,
+_mediaDevices: ?*napi.MediaDevices = null,
+_mediaSession: ?*napi.MediaSession = null,
+_presentation: ?*napi.Presentation = null,
+_protectedAudience: ?*napi.ProtectedAudience = null,
+_scheduling: ?*napi.Scheduling = null,
+_serial: ?*napi.Serial = null,
+_serviceWorker: ?*napi.ServiceWorkerContainer = null,
+_storageBuckets: ?*napi.StorageBucketManager = null,
+_usb: ?*napi.USB = null,
+_virtualKeyboard: ?*napi.VirtualKeyboard = null,
+_wakeLock: ?*napi.WakeLock = null,
+_webkitTemporaryStorage: ?*napi.DeprecatedStorageQuota = null,
+_webkitPersistentStorage: ?*napi.DeprecatedStorageQuota = null,
+_windowControlsOverlay: ?*napi.WindowControlsOverlay = null,
+_xr: ?*napi.XRSystem = null,
 
 pub const init: Navigator = .{};
 
@@ -397,6 +432,296 @@ fn validateProtocolHandlerURL(url: [:0]const u8, frame: *const Frame) !void {
     }
 }
 
+fn getBluetooth(self: *Navigator, frame: *Frame) !*napi.Bluetooth {
+    if (self._bluetooth) |p| return p;
+    const p = try frame._factory.create(napi.Bluetooth{});
+    self._bluetooth = p;
+    return p;
+}
+
+fn getClipboard(self: *Navigator, frame: *Frame) !*napi.Clipboard {
+    if (self._clipboard) |p| return p;
+    const p = try frame._factory.create(napi.Clipboard{});
+    self._clipboard = p;
+    return p;
+}
+
+fn getCredentials(self: *Navigator, frame: *Frame) !*napi.CredentialsContainer {
+    if (self._credentials) |p| return p;
+    const p = try frame._factory.create(napi.CredentialsContainer{});
+    self._credentials = p;
+    return p;
+}
+
+fn getDevicePosture(self: *Navigator, frame: *Frame) !*napi.DevicePosture {
+    if (self._devicePosture) |p| return p;
+    const p = try frame._factory.create(napi.DevicePosture{});
+    self._devicePosture = p;
+    return p;
+}
+
+fn getGpu(self: *Navigator, frame: *Frame) !*napi.GPU {
+    if (self._gpu) |p| return p;
+    const p = try frame._factory.create(napi.GPU{});
+    self._gpu = p;
+    return p;
+}
+
+fn getHid(self: *Navigator, frame: *Frame) !*napi.HID {
+    if (self._hid) |p| return p;
+    const p = try frame._factory.create(napi.HID{});
+    self._hid = p;
+    return p;
+}
+
+fn getInk(self: *Navigator, frame: *Frame) !*napi.Ink {
+    if (self._ink) |p| return p;
+    const p = try frame._factory.create(napi.Ink{});
+    self._ink = p;
+    return p;
+}
+
+fn getLocks(self: *Navigator, frame: *Frame) !*napi.LockManager {
+    if (self._locks) |p| return p;
+    const p = try frame._factory.create(napi.LockManager{});
+    self._locks = p;
+    return p;
+}
+
+fn getLogin(self: *Navigator, frame: *Frame) !*napi.NavigatorLogin {
+    if (self._login) |p| return p;
+    const p = try frame._factory.create(napi.NavigatorLogin{});
+    self._login = p;
+    return p;
+}
+
+fn getManaged(self: *Navigator, frame: *Frame) !*napi.NavigatorManagedData {
+    if (self._managed) |p| return p;
+    const p = try frame._factory.create(napi.NavigatorManagedData{});
+    self._managed = p;
+    return p;
+}
+
+fn getMediaCapabilities(self: *Navigator, frame: *Frame) !*napi.MediaCapabilities {
+    if (self._mediaCapabilities) |p| return p;
+    const p = try frame._factory.create(napi.MediaCapabilities{});
+    self._mediaCapabilities = p;
+    return p;
+}
+
+fn getMediaDevices(self: *Navigator, frame: *Frame) !*napi.MediaDevices {
+    if (self._mediaDevices) |p| return p;
+    const p = try frame._factory.create(napi.MediaDevices{});
+    self._mediaDevices = p;
+    return p;
+}
+
+fn getMediaSession(self: *Navigator, frame: *Frame) !*napi.MediaSession {
+    if (self._mediaSession) |p| return p;
+    const p = try frame._factory.create(napi.MediaSession{});
+    self._mediaSession = p;
+    return p;
+}
+
+fn getPresentation(self: *Navigator, frame: *Frame) !*napi.Presentation {
+    if (self._presentation) |p| return p;
+    const p = try frame._factory.create(napi.Presentation{});
+    self._presentation = p;
+    return p;
+}
+
+fn getProtectedAudience(self: *Navigator, frame: *Frame) !*napi.ProtectedAudience {
+    if (self._protectedAudience) |p| return p;
+    const p = try frame._factory.create(napi.ProtectedAudience{});
+    self._protectedAudience = p;
+    return p;
+}
+
+fn getScheduling(self: *Navigator, frame: *Frame) !*napi.Scheduling {
+    if (self._scheduling) |p| return p;
+    const p = try frame._factory.create(napi.Scheduling{});
+    self._scheduling = p;
+    return p;
+}
+
+fn getSerial(self: *Navigator, frame: *Frame) !*napi.Serial {
+    if (self._serial) |p| return p;
+    const p = try frame._factory.create(napi.Serial{});
+    self._serial = p;
+    return p;
+}
+
+fn getServiceWorker(self: *Navigator, frame: *Frame) !*napi.ServiceWorkerContainer {
+    if (self._serviceWorker) |p| return p;
+    const p = try frame._factory.create(napi.ServiceWorkerContainer{});
+    self._serviceWorker = p;
+    return p;
+}
+
+fn getStorageBuckets(self: *Navigator, frame: *Frame) !*napi.StorageBucketManager {
+    if (self._storageBuckets) |p| return p;
+    const p = try frame._factory.create(napi.StorageBucketManager{});
+    self._storageBuckets = p;
+    return p;
+}
+
+fn getUsb(self: *Navigator, frame: *Frame) !*napi.USB {
+    if (self._usb) |p| return p;
+    const p = try frame._factory.create(napi.USB{});
+    self._usb = p;
+    return p;
+}
+
+fn getVirtualKeyboard(self: *Navigator, frame: *Frame) !*napi.VirtualKeyboard {
+    if (self._virtualKeyboard) |p| return p;
+    const p = try frame._factory.create(napi.VirtualKeyboard{});
+    self._virtualKeyboard = p;
+    return p;
+}
+
+fn getWakeLock(self: *Navigator, frame: *Frame) !*napi.WakeLock {
+    if (self._wakeLock) |p| return p;
+    const p = try frame._factory.create(napi.WakeLock{});
+    self._wakeLock = p;
+    return p;
+}
+
+fn getWebkitTemporaryStorage(self: *Navigator, frame: *Frame) !*napi.DeprecatedStorageQuota {
+    if (self._webkitTemporaryStorage) |p| return p;
+    const p = try frame._factory.create(napi.DeprecatedStorageQuota{});
+    self._webkitTemporaryStorage = p;
+    return p;
+}
+
+fn getWebkitPersistentStorage(self: *Navigator, frame: *Frame) !*napi.DeprecatedStorageQuota {
+    if (self._webkitPersistentStorage) |p| return p;
+    const p = try frame._factory.create(napi.DeprecatedStorageQuota{});
+    self._webkitPersistentStorage = p;
+    return p;
+}
+
+fn getWindowControlsOverlay(self: *Navigator, frame: *Frame) !*napi.WindowControlsOverlay {
+    if (self._windowControlsOverlay) |p| return p;
+    const p = try frame._factory.create(napi.WindowControlsOverlay{});
+    self._windowControlsOverlay = p;
+    return p;
+}
+
+fn getXr(self: *Navigator, frame: *Frame) !*napi.XRSystem {
+    if (self._xr) |p| return p;
+    const p = try frame._factory.create(napi.XRSystem{});
+    self._xr = p;
+    return p;
+}
+
+// -- The remaining Chrome-only navigator methods -----------------------------
+//
+// Same reasoning as navigator_apis.zig: present and correctly shaped, failing
+// the way a real Chrome fails without permission or hardware. The Protected
+// Audience (ad auction) family is the bulk of it; Chrome exposes all of it on
+// every page, so its absence is as visible as any missing device API.
+
+fn rejectUnsupported(exec: *const Execution) js.Promise {
+    return exec.js.local.?.rejectPromise(.{ .dom_exception = .{ .err = error.NotSupported } });
+}
+
+/// No gamepads are ever connected. Chrome hands back a fixed-length array of
+/// empty slots rather than a short one.
+fn getGamepads(_: *const Navigator) [4]?js.Function.Global {
+    return .{ null, null, null, null };
+}
+
+/// Desktop has no vibration motor, and Chrome answers false rather than
+/// throwing.
+fn vibrate(_: *const Navigator) bool {
+    return false;
+}
+
+fn canShare(_: *const Navigator) bool {
+    return false;
+}
+
+fn share(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
+fn setAppBadge(_: *const Navigator, exec: *const Execution) !js.Promise {
+    return exec.js.local.?.resolvePromise({});
+}
+
+fn clearAppBadge(_: *const Navigator, exec: *const Execution) !js.Promise {
+    return exec.js.local.?.resolvePromise({});
+}
+
+fn getInstalledRelatedApps(_: *const Navigator, exec: *const Execution) !js.Promise {
+    const none: []const []const u8 = &.{};
+    return exec.js.local.?.resolvePromise(none);
+}
+
+fn requestMIDIAccess(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
+fn requestMediaKeySystemAccess(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
+/// The pre-promise getUserMedia, which takes its callbacks as arguments. The
+/// error callback is the honest branch: there is no camera.
+fn getUserMedia(_: *const Navigator, _: ?js.Value, _: ?js.Function, error_cb: ?js.Function) void {
+    const cb = error_cb orelse return;
+    var caught: js.TryCatch.Caught = .{};
+    cb.tryCall(void, .{}, &caught) catch {};
+}
+
+// -- Protected Audience ------------------------------------------------------
+
+/// Chrome reports this as a plain false, not a function.
+const deprecated_run_ad_auction_enforces_k_anonymity = false;
+
+fn joinAdInterestGroup(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
+fn leaveAdInterestGroup(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
+fn clearOriginJoinedAdInterestGroups(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
+fn updateAdInterestGroups(_: *const Navigator) void {}
+
+fn runAdAuction(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
+fn createAuctionNonce(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
+fn getInterestGroupAdAuctionData(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
+fn adAuctionComponents(_: *const Navigator) !void {
+    // Chrome throws outside a fenced frame, which is everywhere here.
+    return error.NotSupported;
+}
+
+fn canLoadAdAuctionFencedFrame(_: *const Navigator) bool {
+    return false;
+}
+
+fn deprecatedReplaceInURN(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
+fn deprecatedURNToURL(_: *const Navigator, exec: *const Execution) js.Promise {
+    return rejectUnsupported(exec);
+}
+
 pub const JsApi = struct {
     pub const bridge = js.Bridge(Navigator);
 
@@ -432,6 +757,57 @@ pub const JsApi = struct {
     pub const storage = bridge.accessor(Navigator.getStorage, null, .{});
     pub const userAgentData = bridge.accessor(Navigator.getUserAgentData, null, .{});
     pub const keyboard = bridge.accessor(Navigator.getKeyboard, null, .{});
+
+    pub const getGamepads = bridge.function(Navigator.getGamepads, .{});
+    pub const vibrate = bridge.function(Navigator.vibrate, .{});
+    pub const canShare = bridge.function(Navigator.canShare, .{});
+    pub const share = bridge.function(Navigator.share, .{});
+    pub const setAppBadge = bridge.function(Navigator.setAppBadge, .{});
+    pub const clearAppBadge = bridge.function(Navigator.clearAppBadge, .{});
+    pub const getInstalledRelatedApps = bridge.function(Navigator.getInstalledRelatedApps, .{});
+    pub const requestMIDIAccess = bridge.function(Navigator.requestMIDIAccess, .{});
+    pub const requestMediaKeySystemAccess = bridge.function(Navigator.requestMediaKeySystemAccess, .{});
+    pub const getUserMedia = bridge.function(Navigator.getUserMedia, .{});
+    pub const webkitGetUserMedia = bridge.function(Navigator.getUserMedia, .{});
+    pub const joinAdInterestGroup = bridge.function(Navigator.joinAdInterestGroup, .{});
+    pub const leaveAdInterestGroup = bridge.function(Navigator.leaveAdInterestGroup, .{});
+    pub const clearOriginJoinedAdInterestGroups = bridge.function(Navigator.clearOriginJoinedAdInterestGroups, .{});
+    pub const updateAdInterestGroups = bridge.function(Navigator.updateAdInterestGroups, .{});
+    pub const runAdAuction = bridge.function(Navigator.runAdAuction, .{});
+    pub const createAuctionNonce = bridge.function(Navigator.createAuctionNonce, .{});
+    pub const getInterestGroupAdAuctionData = bridge.function(Navigator.getInterestGroupAdAuctionData, .{});
+    pub const adAuctionComponents = bridge.function(Navigator.adAuctionComponents, .{});
+    pub const canLoadAdAuctionFencedFrame = bridge.function(Navigator.canLoadAdAuctionFencedFrame, .{});
+    pub const deprecatedReplaceInURN = bridge.function(Navigator.deprecatedReplaceInURN, .{});
+    pub const deprecatedURNToURL = bridge.function(Navigator.deprecatedURNToURL, .{});
+    pub const deprecatedRunAdAuctionEnforcesKAnonymity = bridge.property(deprecated_run_ad_auction_enforces_k_anonymity, .{ .template = false });
+
+    pub const bluetooth = bridge.accessor(Navigator.getBluetooth, null, .{});
+    pub const clipboard = bridge.accessor(Navigator.getClipboard, null, .{});
+    pub const credentials = bridge.accessor(Navigator.getCredentials, null, .{});
+    pub const devicePosture = bridge.accessor(Navigator.getDevicePosture, null, .{});
+    pub const gpu = bridge.accessor(Navigator.getGpu, null, .{});
+    pub const hid = bridge.accessor(Navigator.getHid, null, .{});
+    pub const ink = bridge.accessor(Navigator.getInk, null, .{});
+    pub const locks = bridge.accessor(Navigator.getLocks, null, .{});
+    pub const login = bridge.accessor(Navigator.getLogin, null, .{});
+    pub const managed = bridge.accessor(Navigator.getManaged, null, .{});
+    pub const mediaCapabilities = bridge.accessor(Navigator.getMediaCapabilities, null, .{});
+    pub const mediaDevices = bridge.accessor(Navigator.getMediaDevices, null, .{});
+    pub const mediaSession = bridge.accessor(Navigator.getMediaSession, null, .{});
+    pub const presentation = bridge.accessor(Navigator.getPresentation, null, .{});
+    pub const protectedAudience = bridge.accessor(Navigator.getProtectedAudience, null, .{});
+    pub const scheduling = bridge.accessor(Navigator.getScheduling, null, .{});
+    pub const serial = bridge.accessor(Navigator.getSerial, null, .{});
+    pub const serviceWorker = bridge.accessor(Navigator.getServiceWorker, null, .{});
+    pub const storageBuckets = bridge.accessor(Navigator.getStorageBuckets, null, .{});
+    pub const usb = bridge.accessor(Navigator.getUsb, null, .{});
+    pub const virtualKeyboard = bridge.accessor(Navigator.getVirtualKeyboard, null, .{});
+    pub const wakeLock = bridge.accessor(Navigator.getWakeLock, null, .{});
+    pub const webkitTemporaryStorage = bridge.accessor(Navigator.getWebkitTemporaryStorage, null, .{});
+    pub const webkitPersistentStorage = bridge.accessor(Navigator.getWebkitPersistentStorage, null, .{});
+    pub const windowControlsOverlay = bridge.accessor(Navigator.getWindowControlsOverlay, null, .{});
+    pub const xr = bridge.accessor(Navigator.getXr, null, .{});
     pub const plugins = bridge.accessor(Navigator.getPlugins, null, .{});
     pub const mimeTypes = bridge.accessor(Navigator.getMimeTypes, null, .{});
     pub const connection = bridge.accessor(Navigator.getConnection, null, .{});

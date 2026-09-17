@@ -1235,6 +1235,7 @@ pub const PageJsApis = flattenTypes(&.{
     @import("../webapi/Performance.zig"),
     @import("../webapi/EventCounts.zig"),
     @import("../webapi/Keyboard.zig"),
+    @import("../webapi/navigator_apis.zig"),
     @import("../webapi/PluginArray.zig"),
     @import("../webapi/MutationObserver.zig"),
     @import("../webapi/IntersectionObserver.zig"),
