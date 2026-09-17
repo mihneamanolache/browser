@@ -70,20 +70,96 @@ pub fn item(self: *const DOMTokenList, index: usize, frame: *Frame) !?[]const u8
 }
 
 /// https://dom.spec.whatwg.org/#dom-domtokenlist-supports
-/// Only `rel` defines supported tokens here; per spec every other backing
-/// attribute throws. Loaders probe `relList.supports("modulepreload")` and
-/// fall back to fetch()-based legacy loading when it fails.
+///
+/// Only two backing attributes define a set of supported tokens: `rel` and
+/// `sandbox`. For anything else -- classList, part, htmlFor -- the spec says
+/// to throw, and Chrome does.
+///
+/// Which tokens count depends on the *element*, not just the attribute name.
+/// `<link rel>` accepts stylesheet and the preloading keywords, while
+/// `<a rel>` accepts only the three window-opening ones; a list returning
+/// true for "stylesheet" on an anchor is a shape Chrome never produces.
+///
+/// The sets below were read out of Chrome 151 rather than off the spec,
+/// because they differ: Chrome answers false for
+/// `allow-top-navigation-to-custom-protocols` and for the retired
+/// `allow-downloads-without-user-activation`, and true for
+/// `compression-dictionary`, which is not in the HTML standard's table.
+///
+/// Callers use this as a feature probe, so the answer matters: module
+/// loaders fall back to a legacy path when `supports("modulepreload")` is
+/// false, and reCAPTCHA walks its sandbox tokens through
+/// `iframe.sandbox.supports(...)` while building its frame -- throwing there
+/// took out the whole render path.
 pub fn supports(self: *const DOMTokenList, token: []const u8, frame: *Frame) !bool {
-    if (!std.ascii.eqlIgnoreCase(self._attribute_name.str(), "rel")) {
+    const attribute = self._attribute_name.str();
+
+    const supported: []const []const u8 = blk: {
+        if (std.ascii.eqlIgnoreCase(attribute, "sandbox")) {
+            break :blk &sandbox_tokens;
+        }
+        if (std.ascii.eqlIgnoreCase(attribute, "rel")) {
+            break :blk if (std.mem.eql(u8, self._element.getTagNameLower(), "link"))
+                &link_rel_tokens
+            else
+                // <a>, <area> and <form> share one set. Any other element
+                // reflecting `rel` is not a thing Chrome defines tokens for,
+                // but it has no relList either, so it cannot reach this.
+                &hyperlink_rel_tokens;
+        }
         return error.TypeError;
-    }
-    const supported = [_][]const u8{ "stylesheet", "preload", "modulepreload" };
+    };
+
     const lower = try std.ascii.allocLowerString(frame.local_arena, token);
     for (supported) |s| {
         if (std.mem.eql(u8, lower, s)) return true;
     }
     return false;
 }
+
+/// `<iframe sandbox>`. Chrome 151, measured.
+const sandbox_tokens = [_][]const u8{
+    "allow-downloads",
+    "allow-forms",
+    "allow-modals",
+    "allow-orientation-lock",
+    "allow-pointer-lock",
+    "allow-popups",
+    "allow-popups-to-escape-sandbox",
+    "allow-presentation",
+    "allow-same-origin",
+    "allow-scripts",
+    "allow-storage-access-by-user-activation",
+    "allow-top-navigation",
+    "allow-top-navigation-by-user-activation",
+};
+
+/// `<link rel>`. Note "canonical" and "compression-dictionary", which the
+/// HTML standard's link-type table does not list but Chrome accepts.
+const link_rel_tokens = [_][]const u8{
+    "alternate",
+    "apple-touch-icon",
+    "canonical",
+    "compression-dictionary",
+    "dns-prefetch",
+    "icon",
+    "manifest",
+    "modulepreload",
+    "next",
+    "preconnect",
+    "prefetch",
+    "preload",
+    "prerender",
+    "stylesheet",
+};
+
+/// `<a rel>`, `<area rel>` and `<form rel>`: only the keywords that change
+/// how a new window is opened.
+const hyperlink_rel_tokens = [_][]const u8{
+    "noopener",
+    "noreferrer",
+    "opener",
+};
 
 pub fn contains(self: *const DOMTokenList, search: []const u8) !bool {
     var it = std.mem.tokenizeAny(u8, self.getValue(), WHITESPACE);

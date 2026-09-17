@@ -218,6 +218,18 @@ pub fn getNoValidate(self: *const Form) bool {
     return self.asConstElement().getAttributeInterned("novalidate") != null;
 }
 
+/// `<form rel>`. Chrome exposes relList on form the same as on <a> and
+/// <area> -- its supported tokens are the three window-opening keywords, not
+/// the link ones. Missing it entirely meant `form.relList` was undefined,
+/// which any feature probe reads as "no rel support at all".
+pub fn getRelList(self: *Form, frame: *Frame) !?*collections.DOMTokenList {
+    const element = self.asElement();
+    if (element._namespace != .html) {
+        return null;
+    }
+    return element.getRelList(frame);
+}
+
 pub const JsApi = struct {
     pub const bridge = js.Bridge(Form);
     pub const Meta = struct {
@@ -225,6 +237,8 @@ pub const JsApi = struct {
         pub const prototype_chain = bridge.prototypeChain();
         pub var class_id: bridge.ClassId = undefined;
     };
+
+    pub const relList = bridge.accessor(Form.getRelList, null, .{ .null_as_undefined = true });
 
     const reflect = Element.Reflect(Form);
     pub const encoding = reflect.enumerated("enctype", &.{ "application/x-www-form-urlencoded", "multipart/form-data", "text/plain" }, .{ .missing = "application/x-www-form-urlencoded" });

@@ -2,22 +2,87 @@
 <script src="../testing.js"></script>
 
 <link id=l1 rel="stylesheet" href="data:text/css,">
-<div id=d1 class="foo"></div>
+<a id=a1 href="#"></a>
+<area id=ar1>
+<form id=f1></form>
+<iframe id=if1></iframe>
+<div id=d1 class="foo" part="bar"></div>
+<output id=o1></output>
 
 <script id=supports>
 {
+  // Every expectation here was read out of Chrome 151, not off the spec:
+  // the two disagree in both directions.
   const rl = $('#l1').relList;
   testing.expectEqual(true, rl.supports('modulepreload'));
-  testing.expectEqual(true, rl.supports('MODULEPRELOAD'));
+  testing.expectEqual(true, rl.supports('MODULEPRELOAD'));  // case-insensitive
   testing.expectEqual(true, rl.supports('preload'));
   testing.expectEqual(true, rl.supports('stylesheet'));
-  testing.expectEqual(false, rl.supports('prefetch'));
+  testing.expectEqual(true, rl.supports('prefetch'));
+  testing.expectEqual(true, rl.supports('prerender'));
+  testing.expectEqual(true, rl.supports('icon'));
+  testing.expectEqual(true, rl.supports('manifest'));
+  testing.expectEqual(true, rl.supports('alternate'));
+  // Not in the HTML standard's link-type table, but Chrome accepts them.
+  testing.expectEqual(true, rl.supports('canonical'));
+  testing.expectEqual(true, rl.supports('compression-dictionary'));
+  // Anchor-only keywords are not link keywords.
+  testing.expectEqual(false, rl.supports('noopener'));
+  testing.expectEqual(false, rl.supports('nofollow'));
+  testing.expectEqual(false, rl.supports('bogus'));
+}
+</script>
+
+<script id=supports_is_per_element>
+{
+  // <a>, <area> and <form> share a much smaller set than <link>, and a list
+  // that answered true for 'stylesheet' on an anchor is a shape Chrome
+  // never produces.
+  for (const id of ['#a1', '#ar1', '#f1']) {
+    const rl = $(id).relList;
+    // Asserted before the calls below: an undefined relList would otherwise
+    // throw a TypeError of its own and sail through expectError('TypeError').
+    testing.expectEqual('function', typeof rl.supports);
+    testing.expectEqual(true, rl.supports('noopener'));
+    testing.expectEqual(true, rl.supports('noreferrer'));
+    testing.expectEqual(true, rl.supports('opener'));
+    testing.expectEqual(false, rl.supports('stylesheet'));
+    testing.expectEqual(false, rl.supports('modulepreload'));
+    testing.expectEqual(false, rl.supports('nofollow'));
+  }
+}
+</script>
+
+<script id=supports_sandbox>
+{
+  // reCAPTCHA walks these while building its iframe; throwing here took out
+  // its whole render path.
+  const sb = $('#if1').sandbox;
+  testing.expectEqual(true, sb.supports('allow-scripts'));
+  testing.expectEqual(true, sb.supports('ALLOW-SCRIPTS'));
+  testing.expectEqual(true, sb.supports('allow-same-origin'));
+  testing.expectEqual(true, sb.supports('allow-popups'));
+  testing.expectEqual(true, sb.supports('allow-popups-to-escape-sandbox'));
+  testing.expectEqual(true, sb.supports('allow-storage-access-by-user-activation'));
+  testing.expectEqual(true, sb.supports('allow-top-navigation'));
+  testing.expectEqual(true, sb.supports('allow-top-navigation-by-user-activation'));
+  testing.expectEqual(true, sb.supports('allow-downloads'));
+  // Chrome answers false for these two: one was never shipped, the other
+  // was retired.
+  testing.expectEqual(false, sb.supports('allow-top-navigation-to-custom-protocols'));
+  testing.expectEqual(false, sb.supports('allow-downloads-without-user-activation'));
+  testing.expectEqual(false, sb.supports('bogus-token'));
 }
 </script>
 
 <script id=supports_undefined_tokens>
 {
-  // classList's backing attribute defines no supported tokens.
-  testing.expectError('TypeError', () => $('#d1').classList.supports('foo'));
+  // Only rel and sandbox define supported tokens; everything else throws.
+  // Each list is checked to exist first, so a missing API cannot pass these
+  // by throwing "cannot read properties of undefined" instead.
+  for (const l of [$('#d1').classList, $('#d1').part, $('#o1').htmlFor]) {
+    testing.expectEqual('function', typeof l.supports);
+    testing.expectError('TypeError', () => l.supports('foo'));
+  }
 }
 </script>
