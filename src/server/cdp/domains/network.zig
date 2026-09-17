@@ -708,7 +708,8 @@ fn initialPriority(resource_type: HttpClient.Request.ResourceType) []const u8 {
     return switch (resource_type) {
         .document, .stylesheet => "VeryHigh",
         .script, .worker, .xhr, .fetch, .eventsource => "High",
-        .image => "Low",
+        // Beacons are explicitly best-effort; nothing waits on one.
+        .image, .ping => "Low",
     };
 }
 

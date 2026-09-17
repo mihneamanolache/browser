@@ -211,8 +211,22 @@
 
 
 <script id=sendBeacon>
-  // Nothing is sent, but "queued" keeps callers off their sync-XHR fallback.
-  testing.expectEqual(true, navigator.sendBeacon('/analytics'));
-  testing.expectEqual(true, navigator.sendBeacon('/analytics', 'payload'));
-  testing.expectEqual(true, navigator.sendBeacon('/analytics', new Blob(['x'])));
+  // A real POST now, not a no-op: /beacon is a sink in testHTTPHandler that
+  // answers 204, and without it these calls would fault the test server. The
+  // response is unobservable by design, so what is asserted here is the
+  // contract -- whether the beacon was queued -- not the bytes on the wire.
+  testing.expectEqual(true, navigator.sendBeacon('/beacon'));
+  testing.expectEqual(true, navigator.sendBeacon('/beacon', 'payload'));
+  testing.expectEqual(true, navigator.sendBeacon('/beacon', new Blob(['x'])));
+  testing.expectEqual(true, navigator.sendBeacon('/beacon', new URLSearchParams({a: '1'})));
+  testing.expectEqual(true, navigator.sendBeacon('/beacon', new Uint8Array([1, 2, 3])));
+
+  // Over the payload cap the page is told, so it can fall back.
+  testing.expectEqual(false, navigator.sendBeacon('/beacon', 'x'.repeat(65 * 1024)));
+  // And exactly at the cap it is not.
+  testing.expectEqual(true, navigator.sendBeacon('/beacon', 'x'.repeat(64 * 1024)));
+
+  // A URL with nowhere to send to is a caller error, not a quota failure.
+  testing.expectError('TypeError', () => navigator.sendBeacon('ftp://example.com/x'));
+  testing.expectError('TypeError', () => navigator.sendBeacon('data:text/plain,hi'));
 </script>

@@ -1248,6 +1248,13 @@ fn testHTTPHandler(req: *std.http.Server.Request) !void {
         });
     }
 
+    if (std.mem.eql(u8, path, "/beacon")) {
+        // A beacon sink. navigator.sendBeacon really POSTs now, so the tests
+        // that call it need somewhere that answers; a real analytics endpoint
+        // replies 204 and that is what the client expects to discard.
+        return req.respond("", .{ .status = .no_content });
+    }
+
     if (std.mem.eql(u8, path, "/download/report.csv")) {
         // A file download: Content-Disposition: attachment drives the
         // Browser.setDownloadBehavior path (issue #2701).

@@ -23,6 +23,10 @@ const js = @import("../js/js.zig");
 const Frame = @import("../Frame.zig");
 const Execution = js.Execution;
 
+const HttpClient = @import("../../network/HttpClient.zig");
+const URL = @import("../URL.zig");
+const body_init = @import("net/body_init.zig");
+const BodyInit = body_init.BodyInit;
 const PluginArray = @import("PluginArray.zig");
 const MimeTypeArray = PluginArray.MimeTypeArray;
 const Permissions = @import("Permissions.zig");
@@ -154,11 +158,103 @@ fn javaEnabled(_: *const Navigator) bool {
     return false;
 }
 
-/// Noop, signal that the data was successfully queued
-fn sendBeacon(_: *const Navigator, url: js.Value, data: ?js.Value) bool {
-    _ = url;
-    _ = data;
+/// `navigator.sendBeacon(url, data)` — a POST the page does not wait for.
+///
+/// Analytics use it on unload, where a normal fetch would be cancelled. It is
+/// also what a page uses to say "my JS ran": Google's search shell fires
+/// `/gen_204?cad=sg_trbl&ei=...` through it two seconds after load, and a
+/// client that never sends that has announced itself. This used to return
+/// true without sending anything, which kept callers off their sync-XHR
+/// fallback but told the server nothing.
+///
+/// Fire-and-forget by definition: the response is discarded and a transport
+/// error is not reported back to the page, because the spec gives the caller
+/// no way to observe either. The return value only says whether the beacon
+/// was *queued*.
+///
+/// One departure from the spec: the transfer is owned by the frame, so
+/// navigating away cancels it. A real beacon is meant to outlive unload,
+/// which is its whole point on `pagehide`. Nothing here has a detached-owner
+/// path today, and a beacon that survives the page would outlive the arena
+/// its body lives in, so the narrower behaviour is deliberate: beacons sent
+/// while the page is alive -- which is every one that matters to us -- go
+/// out.
+fn sendBeacon(_: *const Navigator, url: []const u8, data: ?BodyInit, frame: *Frame) !bool {
+    // Short-lived: the transfer dupes the body and the headers it keeps.
+    const arena = try frame.getArena(.small, "Navigator.sendBeacon");
+    defer arena.release();
+    const allocator = arena.allocator();
+
+    // A URL that will not parse is a TypeError, not a false return: the spec
+    // separates "you called this wrong" from "the data did not fit".
+    const resolved = try URL.resolve(allocator, frame.base(), url, .{ .encoding = frame.charset });
+    if (!isHttpScheme(resolved)) {
+        return error.TypeError;
+    }
+
+    const body: ?body_init.Extracted = if (data) |d| try d.extract(allocator) else null;
+    if (body) |b| {
+        // Over the quota the beacon is refused, and the page is told so it
+        // can fall back. Chrome's limit, shared across in-flight beacons; we
+        // apply it per call, which is the common case and never over-admits
+        // a single oversized payload.
+        if (b.bytes.len > beacon_max_bytes) {
+            return false;
+        }
+    }
+
+    const transfer = try frame.newRequest(.{
+        .url = resolved,
+        .method = .POST,
+        .body = if (body) |b| b.bytes else null,
+        .origin = frame.origin,
+        // Per the Beacon spec the request is no-cors with credentials
+        // included, which is what makes it useful for session-scoped pings.
+        .request_mode = .no_cors,
+        .credentials_mode = .include,
+        .resource_type = .ping,
+        .shutdown_callback = HttpClient.noopShutdown,
+    });
+    {
+        errdefer transfer.deinit();
+        // BodyInit derives this the same way fetch does, so a Blob keeps its
+        // own type and a string gets text/plain.
+        if (body) |b| {
+            if (b.content_type) |ct| try transfer.setHeader("Content-Type", ct, .{ .source = .author });
+        }
+        try frame.headersForRequest(transfer);
+    }
+    // Errors are swallowed on purpose; see the doc comment.
+    transfer.submit() catch {};
     return true;
+}
+
+/// Chrome's per-beacon payload cap.
+const beacon_max_bytes = 64 * 1024;
+
+/// The spec allows any scheme but requires http(s) in practice: a beacon to
+/// file:// or data:// has no server to reach.
+fn isHttpScheme(url: []const u8) bool {
+    return std.ascii.startsWithIgnoreCase(url, "http://") or
+        std.ascii.startsWithIgnoreCase(url, "https://");
+}
+
+test "Navigator: only http(s) beacons have somewhere to go" {
+    const expect = std.testing.expect;
+    try expect(isHttpScheme("http://example.com/gen_204"));
+    try expect(isHttpScheme("https://example.com/gen_204"));
+    // URL.resolve normalises the scheme's case, but this is cheap to hold.
+    try expect(isHttpScheme("HTTPS://example.com/"));
+
+    try expect(!isHttpScheme("ftp://example.com/"));
+    try expect(!isHttpScheme("data:text/plain,hi"));
+    try expect(!isHttpScheme("file:///etc/passwd"));
+    try expect(!isHttpScheme("javascript:void(0)"));
+    // "https" is a prefix of neither, and a bare path never reaches here.
+    try expect(!isHttpScheme("https"));
+    try expect(!isHttpScheme(""));
+    // A scheme that merely starts with http is not http.
+    try expect(!isHttpScheme("httpx://example.com/"));
 }
 
 /// Lazy: the plugin graph is a handful of allocations that most pages never

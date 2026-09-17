@@ -1884,6 +1884,7 @@ pub const Request = struct {
         eventsource,
         image,
         worker,
+        ping,
 
         // Allowed Values: Document, Stylesheet, Image, Media, Font, Script,
         // TextTrack, XHR, Fetch, Prefetch, EventSource, WebSocket, Manifest,
@@ -1899,6 +1900,7 @@ pub const Request = struct {
                 .eventsource => "EventSource",
                 .image => "Image",
                 .worker => "Script",
+                .ping => "Ping",
             };
         }
     };
@@ -3042,7 +3044,7 @@ pub const Transfer = struct {
                 .script => "script",
                 .fetch => "fetch",
                 .stylesheet => "link",
-                .eventsource, .worker => "other",
+                .eventsource, .worker, .ping => "other",
                 .image => "img",
             },
             .protocol = t.protocol,
@@ -3614,7 +3616,8 @@ pub const Transfer = struct {
             .stylesheet => "style",
             .image => "image",
             .worker => "worker",
-            .xhr, .fetch, .eventsource => "empty",
+            // A beacon's destination really is empty, same as fetch().
+            .xhr, .fetch, .eventsource, .ping => "empty",
         };
 
         // Mode mirrors the request mode the fetch was made with. A document
