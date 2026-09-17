@@ -672,6 +672,16 @@ pub fn newRequest(self: *Client, req: Request, owner: ?*Owner) anyerror!*Transfe
             .none => .none,
             .url => |url| .{ .url = try arena.dupeZ(u8, url) },
         };
+        // Same value *without* the owner fallback. SameSite wants the
+        // fallback -- a request with no stated initiator still belongs to the
+        // frame that made it -- but Sec-Fetch-Site must not: a top-level
+        // navigation the user typed has no initiating document at all, and
+        // the owner's site-for-cookies is by then already the target itself,
+        // which would report same-origin for a URL nothing linked to.
+        const initiator: Cookie.SiteForCookies = switch (req.cookie_origin orelse .none) {
+            .none => .none,
+            .url => |url| .{ .url = try arena.dupeZ(u8, url) },
+        };
         owned.cookie_origin = null;
 
         if (req.basic_auth_credentials) |c| {
@@ -695,6 +705,7 @@ pub fn newRequest(self: *Client, req: Request, owner: ?*Owner) anyerror!*Transfe
             .req = owned,
             .cookie_jar = cookie_jar,
             .cookie_origin = cookie_origin,
+            .initiator = initiator,
             .client = self,
             .arena = arena,
             .id = self.incrReqId(),
@@ -2268,6 +2279,10 @@ pub const Transfer = struct {
     cookie_jar: ?*CookieJar = null,
     // The site for SameSite checks: Request.cookie_origin, else the owner's.
     cookie_origin: Cookie.SiteForCookies = .none,
+    /// The document that initiated this request, if one did. Unlike
+    /// `cookie_origin` this is never filled in from the owner, because
+    /// Sec-Fetch-Site distinguishes "no initiator" from "same origin".
+    initiator: Cookie.SiteForCookies = .none,
 
     req_headers: std.ArrayList(RequestHeader) = .empty,
 
@@ -3639,6 +3654,15 @@ pub const Transfer = struct {
         // the same reason SameSite needs it. A subresource's origin *is* its
         // initiator, so that path reads req.origin as normal.
         //
+        // Read off the *transfer*, not off `req`: newRequest moves the
+        // initiator onto self.initiator and deliberately nulls the request's
+        // copy. This used to read the nulled one, so every navigation
+        // reported "none" -- and, via the Sec-Fetch-User rule below, claimed
+        // the user had typed the URL. A script-initiated navigation to a URL
+        // carrying a token that only exists inside the page we were just
+        // served is not something a human can type, and that contradiction
+        // is free for a server to spot.
+        //
         // Host comparison rather than full origin: a scheme-only difference
         // (http -> https on the same host) reports same-origin here where
         // Chrome would say cross-site. That is the rare case, and erring
@@ -3646,7 +3670,7 @@ pub const Transfer = struct {
         // would treat as suspicious.
         const site: []const u8 = blk: {
             const initiator_host: []const u8 = if (req.resource_type == .document)
-                switch (req.cookie_origin orelse .none) {
+                switch (self.initiator) {
                     .none => break :blk "none",
                     .url => |initiator_url| URL.getHostname(initiator_url),
                 }
