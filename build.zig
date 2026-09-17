@@ -641,14 +641,98 @@ fn buildBoringSsl(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin
         .force_pic = true,
     });
 
-    const ssl = sectionize(dep.artifact("ssl"), section);
-    ssl.bundle_ubsan_rt = false;
-
     const crypto = sectionize(dep.artifact("crypto"), section);
     crypto.bundle_ubsan_rt = false;
 
+    // libssl is rebuilt here instead of taken from the wrapper, because one
+    // of its sources is patched: BoringSSL will not let us advertise the
+    // ML-DSA signature algorithms Chrome leads its ClientHello with, and that
+    // one list is the difference between matching Chrome's JA4 and missing
+    // it. See tools/boringssl_sigalg_patch.zig.
+    //
+    // The source comes from the wrapper's own `ssl` dependency rather than a
+    // second entry in build.zig.zon, so libssl and libcrypto can never be
+    // built from different BoringSSL revisions.
+    const src = dep.builder.dependency("ssl", .{});
+
+    const sigalg_patch = b.addRunArtifact(b.addExecutable(.{
+        .name = "boringssl_sigalg_patch",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/boringssl_sigalg_patch.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    }));
+    sigalg_patch.addDirectoryArg(src.path("ssl"));
+    const patched_ssl = sigalg_patch.addOutputDirectoryArg("boringssl-sigalg-patched");
+
+    const mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
+        .pic = true,
+    });
+    mod.linkLibrary(crypto);
+    mod.addIncludePath(src.path("include"));
+    mod.addCSourceFiles(.{ .root = src.path("."), .files = ssl_sources });
+    // The patched copy lives outside the BoringSSL tree, so its headers have
+    // to be reachable by the same relative names the file uses upstream.
+    mod.addIncludePath(src.path("ssl"));
+    mod.addCSourceFiles(.{ .root = patched_ssl, .files = &.{"ssl_privkey.cc"} });
+
+    const ssl_lib = b.addLibrary(.{ .name = "ssl", .root_module = mod });
+    ssl_lib.installHeadersDirectory(src.path("include"), "", .{});
+
+    const ssl = sectionize(ssl_lib, section);
+    ssl.bundle_ubsan_rt = false;
+
     return .{ ssl, crypto };
 }
+
+/// BoringSSL's libssl sources, copied from the boringssl-zig wrapper, minus
+/// ssl_privkey.cc which is compiled from the patched copy above. A bump that
+/// adds or removes a file here will fail to link rather than silently drop
+/// one, and the patch tool fails the build if ssl_privkey.cc itself moves.
+const ssl_sources = &.{
+    "ssl/bio_ssl.cc",
+    "ssl/d1_both.cc",
+    "ssl/d1_lib.cc",
+    "ssl/d1_pkt.cc",
+    "ssl/d1_srtp.cc",
+    "ssl/dtls_method.cc",
+    "ssl/dtls_record.cc",
+    "ssl/encrypted_client_hello.cc",
+    "ssl/extensions.cc",
+    "ssl/handoff.cc",
+    "ssl/handshake.cc",
+    "ssl/handshake_client.cc",
+    "ssl/handshake_server.cc",
+    "ssl/s3_both.cc",
+    "ssl/s3_lib.cc",
+    "ssl/s3_pkt.cc",
+    "ssl/ssl_aead_ctx.cc",
+    "ssl/ssl_asn1.cc",
+    "ssl/ssl_buffer.cc",
+    "ssl/ssl_cert.cc",
+    "ssl/ssl_cipher.cc",
+    "ssl/ssl_credential.cc",
+    "ssl/ssl_file.cc",
+    "ssl/ssl_key_share.cc",
+    "ssl/ssl_lib.cc",
+    "ssl/ssl_session.cc",
+    "ssl/ssl_stat.cc",
+    "ssl/ssl_transcript.cc",
+    "ssl/ssl_versions.cc",
+    "ssl/ssl_x509.cc",
+    "ssl/t1_enc.cc",
+    "ssl/tls13_both.cc",
+    "ssl/tls13_client.cc",
+    "ssl/tls13_enc.cc",
+    "ssl/tls13_server.cc",
+    "ssl/tls_method.cc",
+    "ssl/tls_record.cc",
+};
 
 fn buildNghttp2(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, is_tsan: bool, section: bool) *Build.Step.Compile {
     const dep = b.dependency("nghttp2", .{});

@@ -79,14 +79,21 @@ const cipher_list: [:0]const u8 =
 const curve_list: [:0]const u8 = "X25519MLKEM768:X25519:P-256:P-384";
 
 /// The signature_algorithms extension, raw IANA code points in Chrome's
-/// order.
+/// order. This is exactly what goes on the wire, and JA4's third component
+/// hashes it in order, so a list short by even one entry is a different JA4
+/// from the Chrome it claims to be.
 ///
-/// Chrome leads with 0x0904-0x0906, the ML-DSA entries. This BoringSSL does
-/// not know those code points and rejects the whole list if they are
-/// included, so they are omitted: eight of Chrome's eleven, in Chrome's
-/// order, beats falling back to BoringSSL's default list, which trails
+/// Chrome leads with the three ML-DSA entries. Stock BoringSSL will not
+/// accept code points it does not implement and rejects the whole list,
+/// which is why `tools/boringssl_sigalg_patch.zig` exists: it lets the
+/// *verify* prefs carry unknown algorithms, since those are only an
+/// advertisement plus the set a server's choice is checked against. Without
+/// that patch this list silently becomes BoringSSL's default, which trails
 /// rsa_pkcs1_sha1 (0x0201) that Chrome has not offered in years.
 const signature_algorithms = [_]u16{
+    0x0904, // mldsa44
+    0x0905, // mldsa65
+    0x0906, // mldsa87
     0x0403, // ecdsa_secp256r1_sha256
     0x0804, // rsa_pss_rsae_sha256
     0x0401, // rsa_pkcs1_sha256
@@ -96,6 +103,15 @@ const signature_algorithms = [_]u16{
     0x0806, // rsa_pss_rsae_sha512
     0x0601, // rsa_pkcs1_sha512
 };
+
+/// How many of the above this BoringSSL can actually produce a signature
+/// with. The ML-DSA entries are advertised but not implemented, so they are
+/// excluded from the signing prefs -- which are a genuine capability claim,
+/// unlike the verify prefs. Only client certificates use them and nothing
+/// here presents one, but a prefs list BoringSSL rejects would leave its
+/// default in place, so the split is kept honest rather than convenient.
+const unimplemented_signature_algorithms = 3;
+const signing_algorithms = signature_algorithms[unimplemented_signature_algorithms..];
 
 /// ALPN in wire format: each entry is a length byte then the protocol name.
 /// Chrome offers h2 then http/1.1, and the order is what a server echoes
@@ -182,11 +198,16 @@ pub fn apply(ctx: *crypto.SSL_CTX) void {
         log.warn(.http, "tls fingerprint", .{ .step = "curves_list", .hint = "X25519MLKEM768 needs a recent BoringSSL" });
     }
 
-    if (crypto.SSL_CTX_set_signing_algorithm_prefs(ctx, &signature_algorithms, signature_algorithms.len) != 1) {
+    if (crypto.SSL_CTX_set_signing_algorithm_prefs(ctx, signing_algorithms.ptr, signing_algorithms.len) != 1) {
         log.warn(.http, "tls fingerprint", .{ .step = "signing_algorithm_prefs" });
     }
     if (crypto.SSL_CTX_set_verify_algorithm_prefs(ctx, &signature_algorithms, signature_algorithms.len) != 1) {
-        log.warn(.http, "tls fingerprint", .{ .step = "verify_algorithm_prefs" });
+        // Almost certainly an unpatched BoringSSL: the ML-DSA code points are
+        // rejected, the default list is used, and the JA4 stops matching.
+        log.warn(.http, "tls fingerprint", .{
+            .step = "verify_algorithm_prefs",
+            .hint = "ML-DSA code points need tools/boringssl_sigalg_patch.zig applied",
+        });
     }
 
     if (crypto.SSL_CTX_set_alpn_protos(ctx, &alpn_protos, alpn_protos.len) != 0) {
@@ -234,15 +255,27 @@ test "tls_fingerprint: cipher list covers exactly the reference capture's TLS 1.
     try testing.expectEqual(12, count);
 }
 
-test "tls_fingerprint: signature algorithms are Chrome's, minus the ML-DSA ones BoringSSL rejects" {
+test "tls_fingerprint: signature algorithms are Chrome's, in Chrome's order" {
+    // Captured from a real Chrome 151 ClientHello through the same proxy
+    // exit. JA4 hashes this list in order, so the order is part of the match
+    // and this is a literal transcription, not a preference.
     try testing.expectEqualSlices(u16, &.{
-        0x0403, 0x0804, 0x0401, 0x0503,
-        0x0805, 0x0501, 0x0806, 0x0601,
+        0x0904, 0x0905, 0x0906, 0x0403, 0x0804, 0x0401,
+        0x0503, 0x0805, 0x0501, 0x0806, 0x0601,
     }, &signature_algorithms);
 
-    // rsa_pkcs1_sha1 is in BoringSSL's default list and not in Chrome's; the
-    // whole point of setting prefs explicitly is to drop it.
-    for (signature_algorithms) |alg| {
+    // What we offer to sign with is the same list minus what BoringSSL
+    // cannot produce, and nothing else: dropping a fourth entry here would
+    // quietly change what a client-certificate handshake negotiates.
+    try testing.expectEqualSlices(
+        u16,
+        signature_algorithms[unimplemented_signature_algorithms..],
+        signing_algorithms,
+    );
+    for (signing_algorithms) |alg| {
+        try testing.expect(alg < 0x0904 or alg > 0x0906);
+        // rsa_pkcs1_sha1 is in BoringSSL's default list and not in Chrome's;
+        // the whole point of setting prefs explicitly is to drop it.
         try testing.expect(alg != 0x0201);
     }
 }
