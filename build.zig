@@ -944,6 +944,37 @@ fn buildCurl(
     const lib = sectionize(b.addLibrary(.{ .name = "curl", .root_module = mod }), section);
     mod.addConfigHeader(curl_config);
     lib.installHeadersDirectory(dep.path("include/curl"), "curl", .{});
+
+    // http.c and http2.c are rewritten so the HTTP/2 preface matches Chrome's
+    // rather than nghttp2's defaults; the SETTINGS frame, the initial
+    // WINDOW_UPDATE and the pseudo-header order are all fingerprinted, and
+    // none of them is reachable through libcurl's API. See
+    // tools/curl_h2_patch.zig, which fails the build if upstream moves.
+    const h2_patch = b.addRunArtifact(b.addExecutable(.{
+        .name = "curl_h2_patch",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/curl_h2_patch.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    }));
+    h2_patch.addDirectoryArg(dep.path("lib"));
+    const patched_curl = h2_patch.addOutputDirectoryArg("curl-h2-patched");
+
+    mod.addCSourceFiles(.{
+        .root = patched_curl,
+        .flags = &.{
+            "-D_GNU_SOURCE",
+            "-DHAVE_CONFIG_H",
+            "-DCURL_STATICLIB",
+            "-DBUILDING_LIBCURL",
+        },
+        .files = &.{ "http.c", "http2.c" },
+    });
+    // The patched copies live outside the curl tree, so its own headers have
+    // to be reachable by the same relative names they use upstream.
+    mod.addIncludePath(dep.path("lib"));
+
     mod.addCSourceFiles(.{
         .root = dep.path("lib"),
         .flags = &.{
@@ -954,56 +985,56 @@ fn buildCurl(
         },
         .files = &.{
             // You can include all files from lib, libcurl uses #ifdef-guards to exclude code for disabled functions
-            "altsvc.c",                "amigaos.c",              "api.c",               "bufq.c",
-            "bufref.c",                "cf-h1-proxy.c",          "cf-h2-proxy.c",       "cf-haproxy.c",
-            "cf-https-connect.c",      "cf-ip-happy.c",          "cf-recvbuf.c",        "cf-setup.c",
-            "cf-socket.c",             "cfilters.c",             "conncache.c",         "connect.c",
-            "content_encoding.c",      "cookie.c",               "creds.c",             "cshutdn.c",
-            "curl_addrinfo.c",         "curl_ed25519.c",         "curl_endian.c",       "curl_fnmatch.c",
-            "curl_fopen.c",            "curl_get_line.c",        "curl_gethostname.c",  "curl_gssapi.c",
-            "curl_memrchr.c",          "curl_ntlm_core.c",       "curl_range.c",        "curl_sasl.c",
-            "curl_sha512_256.c",       "curl_share.c",           "curl_sspi.c",         "curl_threads.c",
-            "curl_trc.c",              "curlx/base64.c",         "curlx/basename.c",    "curlx/dynbuf.c",
-            "curlx/fopen.c",           "curlx/inet_ntop.c",      "curlx/inet_pton.c",   "curlx/multibyte.c",
-            "curlx/nonblock.c",        "curlx/snprintf.c",       "curlx/strcopy.c",     "curlx/strdup.c",
-            "curlx/strerr.c",          "curlx/strparse.c",       "curlx/timediff.c",    "curlx/timeval.c",
-            "curlx/version_win32.c",   "curlx/wait.c",           "curlx/warnless.c",    "curlx/winapi.c",
-            "cw-out.c",                "cw-pause.c",             "dict.c",              "dllmain.c",
-            "dynhds.c",                "easy.c",                 "easygetopt.c",        "easyoptions.c",
-            "escape.c",                "fake_addrinfo.c",        "file.c",              "fileinfo.c",
-            "formdata.c",              "ftp.c",                  "ftplistparser.c",     "getenv.c",
-            "getinfo.c",               "gopher.c",               "hash.c",              "headers.c",
-            "hmac.c",                  "hsts.c",                 "http.c",              "http1.c",
-            "http2.c",                 "http_aws_sigv4.c",       "http_chunks.c",       "http_digest.c",
-            "http_httpsig.c",          "http_negotiate.c",       "http_ntlm.c",         "http_proxy.c",
-            "idn.c",                   "if2ip.c",                "imap.c",              "ldap.c",
-            "llist.c",                 "macos.c",                "md4.c",               "md5.c",
-            "memdebug.c",              "mime.c",                 "mprintf.c",           "mqtt.c",
-            "multi.c",                 "multi_ev.c",             "multi_ntfy.c",        "netrc.c",
-            "openldap.c",              "parsedate.c",            "peer.c",              "pingpong.c",
-            "pop3.c",                  "progress.c",             "protocol.c",          "proxy.c",
-            "psl.c",                   "rand.c",                 "ratelimit.c",         "request.c",
-            "rtsp.c",                  "select.c",               "sendf.c",             "setopt.c",
-            "sha256.c",                "slist.c",                "smb.c",               "smtp.c",
-            "socketpair.c",            "socks.c",                "socks_gssapi.c",      "socks_sspi.c",
-            "splay.c",                 "strcase.c",              "strequal.c",          "strerror.c",
-            "system_win32.c",          "telnet.c",               "tftp.c",              "thrdpool.c",
-            "thrdqueue.c",             "transfer.c",             "uint-bset.c",         "uint-hash.c",
-            "uint-hashset.c",          "uint-spbset.c",          "uint-table.c",        "url.c",
-            "urlapi.c",                "vauth/cleartext.c",      "vauth/cram.c",        "vauth/digest.c",
-            "vauth/digest_sspi.c",     "vauth/gsasl.c",          "vauth/krb5_gssapi.c", "vauth/krb5_sspi.c",
-            "vauth/ntlm.c",            "vauth/ntlm_sspi.c",      "vauth/oauth2.c",      "vauth/spnego_gssapi.c",
-            "vauth/spnego_sspi.c",     "vauth/vauth.c",          "vdns/asyn-ares.c",    "vdns/asyn-base.c",
-            "vdns/asyn-thrdd.c",       "vdns/cf-dns.c",          "vdns/dnscache.c",     "vdns/doh.c",
-            "vdns/hostip.c",           "vdns/hostip4.c",         "vdns/hostip6.c",      "vdns/httpsrr.c",
-            "version.c",               "vquic/capsule.c",        "vquic/cf-capsule.c",  "vquic/cf-ngtcp2-cmn.c",
-            "vquic/cf-ngtcp2-proxy.c", "vquic/cf-ngtcp2.c",      "vquic/cf-quiche.c",   "vquic/vquic-tls.c",
-            "vquic/vquic.c",           "vssh/libssh.c",          "vssh/libssh2.c",      "vssh/vssh.c",
-            "vtls/apple.c",            "vtls/cipher_suite.c",    "vtls/gtls.c",         "vtls/hostcheck.c",
-            "vtls/keylog.c",           "vtls/mbedtls.c",         "vtls/openssl.c",      "vtls/rustls.c",
-            "vtls/schannel.c",         "vtls/schannel_verify.c", "vtls/vtls.c",         "vtls/vtls_config.c",
-            "vtls/vtls_scache.c",      "vtls/vtls_spack.c",      "vtls/wolfssl.c",      "vtls/x509asn1.c",
-            "ws.c",
+            "altsvc.c",              "amigaos.c",             "api.c",                   "bufq.c",
+            "bufref.c",              "cf-h1-proxy.c",         "cf-h2-proxy.c",           "cf-haproxy.c",
+            "cf-https-connect.c",    "cf-ip-happy.c",         "cf-recvbuf.c",            "cf-setup.c",
+            "cf-socket.c",           "cfilters.c",            "conncache.c",             "connect.c",
+            "content_encoding.c",    "cookie.c",              "creds.c",                 "cshutdn.c",
+            "curl_addrinfo.c",       "curl_ed25519.c",        "curl_endian.c",           "curl_fnmatch.c",
+            "curl_fopen.c",          "curl_get_line.c",       "curl_gethostname.c",      "curl_gssapi.c",
+            "curl_memrchr.c",        "curl_ntlm_core.c",      "curl_range.c",            "curl_sasl.c",
+            "curl_sha512_256.c",     "curl_share.c",          "curl_sspi.c",             "curl_threads.c",
+            "curl_trc.c",            "curlx/base64.c",        "curlx/basename.c",        "curlx/dynbuf.c",
+            "curlx/fopen.c",         "curlx/inet_ntop.c",     "curlx/inet_pton.c",       "curlx/multibyte.c",
+            "curlx/nonblock.c",      "curlx/snprintf.c",      "curlx/strcopy.c",         "curlx/strdup.c",
+            "curlx/strerr.c",        "curlx/strparse.c",      "curlx/timediff.c",        "curlx/timeval.c",
+            "curlx/version_win32.c", "curlx/wait.c",          "curlx/warnless.c",        "curlx/winapi.c",
+            "cw-out.c",              "cw-pause.c",            "dict.c",                  "dllmain.c",
+            "dynhds.c",              "easy.c",                "easygetopt.c",            "easyoptions.c",
+            "escape.c",              "fake_addrinfo.c",       "file.c",                  "fileinfo.c",
+            "formdata.c",            "ftp.c",                 "ftplistparser.c",         "getenv.c",
+            "getinfo.c",             "gopher.c",              "hash.c",                  "headers.c",
+            // http.c and http2.c are compiled from the patched copies below.
+            "hmac.c",                "hsts.c",                "http1.c",                 "http_aws_sigv4.c",
+            "http_chunks.c",         "http_digest.c",         "http_httpsig.c",          "http_negotiate.c",
+            "http_ntlm.c",           "http_proxy.c",          "idn.c",                   "if2ip.c",
+            "imap.c",                "ldap.c",                "llist.c",                 "macos.c",
+            "md4.c",                 "md5.c",                 "memdebug.c",              "mime.c",
+            "mprintf.c",             "mqtt.c",                "multi.c",                 "multi_ev.c",
+            "multi_ntfy.c",          "netrc.c",               "openldap.c",              "parsedate.c",
+            "peer.c",                "pingpong.c",            "pop3.c",                  "progress.c",
+            "protocol.c",            "proxy.c",               "psl.c",                   "rand.c",
+            "ratelimit.c",           "request.c",             "rtsp.c",                  "select.c",
+            "sendf.c",               "setopt.c",              "sha256.c",                "slist.c",
+            "smb.c",                 "smtp.c",                "socketpair.c",            "socks.c",
+            "socks_gssapi.c",        "socks_sspi.c",          "splay.c",                 "strcase.c",
+            "strequal.c",            "strerror.c",            "system_win32.c",          "telnet.c",
+            "tftp.c",                "thrdpool.c",            "thrdqueue.c",             "transfer.c",
+            "uint-bset.c",           "uint-hash.c",           "uint-hashset.c",          "uint-spbset.c",
+            "uint-table.c",          "url.c",                 "urlapi.c",                "vauth/cleartext.c",
+            "vauth/cram.c",          "vauth/digest.c",        "vauth/digest_sspi.c",     "vauth/gsasl.c",
+            "vauth/krb5_gssapi.c",   "vauth/krb5_sspi.c",     "vauth/ntlm.c",            "vauth/ntlm_sspi.c",
+            "vauth/oauth2.c",        "vauth/spnego_gssapi.c", "vauth/spnego_sspi.c",     "vauth/vauth.c",
+            "vdns/asyn-ares.c",      "vdns/asyn-base.c",      "vdns/asyn-thrdd.c",       "vdns/cf-dns.c",
+            "vdns/dnscache.c",       "vdns/doh.c",            "vdns/hostip.c",           "vdns/hostip4.c",
+            "vdns/hostip6.c",        "vdns/httpsrr.c",        "version.c",               "vquic/capsule.c",
+            "vquic/cf-capsule.c",    "vquic/cf-ngtcp2-cmn.c", "vquic/cf-ngtcp2-proxy.c", "vquic/cf-ngtcp2.c",
+            "vquic/cf-quiche.c",     "vquic/vquic-tls.c",     "vquic/vquic.c",           "vssh/libssh.c",
+            "vssh/libssh2.c",        "vssh/vssh.c",           "vtls/apple.c",            "vtls/cipher_suite.c",
+            "vtls/gtls.c",           "vtls/hostcheck.c",      "vtls/keylog.c",           "vtls/mbedtls.c",
+            "vtls/openssl.c",        "vtls/rustls.c",         "vtls/schannel.c",         "vtls/schannel_verify.c",
+            "vtls/vtls.c",           "vtls/vtls_config.c",    "vtls/vtls_scache.c",      "vtls/vtls_spack.c",
+            "vtls/wolfssl.c",        "vtls/x509asn1.c",       "ws.c",
         },
     });
 
