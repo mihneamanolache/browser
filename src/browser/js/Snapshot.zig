@@ -790,7 +790,11 @@ fn attachClass(comptime JsApi: type, comptime flatten: bool, isolate: *v8.Isolat
                     // later in this function.
                     continue;
                 }
-                attachAccessorProperty(name, value, isolate, template, signature, define_on orelse prototype);
+                // member_template, not prototype: a namespace object's
+                // attributes are own properties too, not just its methods.
+                // window.chrome is a plain object, so Object.keys(chrome) has
+                // to list `app` alongside csi and loadTimes.
+                attachAccessorProperty(name, value, isolate, template, signature, define_on orelse member_template);
             },
             bridge.Function => {
                 if (value.wpt_only and wpt_extensions_enabled == false) {

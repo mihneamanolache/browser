@@ -85,18 +85,19 @@ fn getContext(self: *Canvas, context_type: []const u8, frame: *Frame) !?DrawingC
             break :blk .{ .@"2d" = ctx };
         }
 
-        // We only stub a tiny slice of the WebGL API (getParameter,
-        // getExtension, getSupportedExtensions). Real WebGL consumers like
-        // Three.js immediately call createTexture/createBuffer/etc. and
-        // throw `TypeError: e.createTexture is not a function`. Pretending
-        // WebGL works until the first non-stubbed call is the worst of both
-        // worlds: pages that have an error boundary above the WebGL widget
-        // catch the throw, reset, re-render, and loop forever.
-        // Spec-correct signal for "no WebGL" is null, so apps that check
-        // (Three.js does) can degrade gracefully.
+        // The whole WebGL 1.0 surface is implemented (see
+        // WebGLRenderingContext), so a consumer like Three.js runs its setup
+        // path to completion instead of throwing on the first call we never
+        // stubbed. Nothing is drawn — but returning null here would be a
+        // louder signal than drawing nothing, since a desktop Chrome that
+        // cannot do WebGL is close to unheard of.
         if (std.mem.eql(u8, context_type, "webgl") or std.mem.eql(u8, context_type, "experimental-webgl")) {
-            return null;
+            const ctx = try frame._factory.create(WebGLRenderingContext{ ._canvas = self });
+            break :blk .{ .webgl = ctx };
         }
+
+        // webgl2 and webgpu are genuinely absent, and a page that asks for
+        // one already has to handle null.
         return null;
     };
     self._cached = drawing_context;

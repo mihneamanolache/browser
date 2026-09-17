@@ -48,6 +48,8 @@ const IDBTransaction = @import("storage/idb/IDBTransaction.zig");
 
 const FontFaceSet = @import("css/FontFaceSet.zig");
 const MediaQueryList = @import("css/MediaQueryList.zig");
+const NetworkInformation = @import("net/NetworkInformation.zig");
+const BatteryManager = @import("BatteryManager.zig");
 
 const TextTrackCue = @import("media/TextTrackCue.zig");
 
@@ -69,6 +71,7 @@ _type: Type align(8),
 
 pub const Type = enum(u8) {
     abort_signal,
+    battery_manager,
     broadcast_channel,
     cookie_store,
     event_source,
@@ -82,6 +85,7 @@ pub const Type = enum(u8) {
     message_port,
     navigation,
     navigation_history_entry,
+    network_information,
     node,
     notification,
     performance,
@@ -102,6 +106,7 @@ pub const Type = enum(u8) {
 pub fn Subtype(comptime tag: Type) type {
     return switch (tag) {
         .abort_signal => AbortSignal,
+        .battery_manager => BatteryManager,
         .broadcast_channel => BroadcastChannel,
         .cookie_store => CookieStore,
         .event_source => EventSource,
@@ -115,6 +120,7 @@ pub fn Subtype(comptime tag: Type) type {
         .message_port => MessagePort,
         .navigation => Navigation,
         .navigation_history_entry => NavigationHistoryEntry,
+        .network_information => NetworkInformation,
         .node => Node,
         .notification => Notification,
         .performance => Performance,
@@ -334,12 +340,15 @@ pub fn format(self: *EventTarget, writer: *std.Io.Writer) !void {
         .idb_transaction => writer.writeAll("<IDBTransaction>"),
         .notification => writer.writeAll("<Notification>"),
         .navigation_history_entry => writer.writeAll("<NavigationHistoryEntry>"),
+        .network_information => writer.writeAll("<NetworkInformation>"),
+        .battery_manager => writer.writeAll("<BatteryManager>"),
     };
 }
 
 pub fn toString(self: *EventTarget) []const u8 {
     return switch (self._type) {
         .abort_signal => return "[object AbortSignal]",
+        .battery_manager => return "[object BatteryManager]",
         .broadcast_channel => return "[object BroadcastChannel]",
         .cookie_store => return "[object CookieStore]",
         .event_source => return "[object EventSource]",
@@ -353,6 +362,7 @@ pub fn toString(self: *EventTarget) []const u8 {
         .message_port => return "[object MessagePort]",
         .navigation => return "[object Navigation]",
         .navigation_history_entry => return "[object NavigationHistoryEntry]",
+        .network_information => return "[object NetworkInformation]",
         .node => return "[object Node]",
         .notification => return "[object Notification]",
         .performance => return "[object Performance]",

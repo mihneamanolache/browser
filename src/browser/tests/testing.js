@@ -148,7 +148,10 @@
     console.warn('Pending count:', Array.from(async_pending.keys()));
   }
 
-  const IS_TEST_RUNNER = window.navigator.userAgent.startsWith("Lightpanda/");
+  // Set by the Zig test runner via an injected script. Deliberately not a
+  // user-agent sniff: the UA is Chrome's byte for byte, so it cannot tell the
+  // runner apart from a developer's browser.
+  const IS_TEST_RUNNER = window.__LIGHTPANDA_TEST_RUNNER__ === true;
 
   window.testing = {
     fail: fail,

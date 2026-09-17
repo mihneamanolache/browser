@@ -5,43 +5,55 @@
   // Navigator should be accessible from window
   testing.expectEqual(navigator, window.navigator);
   testing.expectEqual(true, navigator.userAgent.length > 0);
-  testing.expectEqual(true, navigator.userAgent.includes('Lightpanda'));
+  // startsWith, not equality: the test runner appends --user-agent-suffix so
+  // its traffic stays identifiable in logs.
+  testing.expectEqual(true, navigator.userAgent.startsWith(
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'));
+  testing.expectEqual(false, navigator.userAgent.includes('Lightpanda'));
   testing.expectEqual('Netscape', navigator.appName);
-  testing.expectEqual('1.0', navigator.appVersion);
-  testing.expectEqual(true, navigator.platform.length > 0);
+  // appVersion is the UA minus its "Mozilla/" prefix, always.
+  testing.expectEqual(navigator.userAgent, 'Mozilla/' + navigator.appVersion);
 
-  // Platform should be one of the known values
-  const validPlatforms = ['MacIntel', 'Win32', 'Linux x86_64', 'FreeBSD', 'Unknown'];
-  testing.expectEqual(true, validPlatforms.includes(navigator.platform));
-  testing.expectEqual('en-US', navigator.language);
+  // Fixed regardless of the host OS: a Linux and a macOS build must be
+  // indistinguishable from a page.
+  testing.expectEqual('MacIntel', navigator.platform);
+  // Frozen Chromium constants; CreepJS, BrowserLeaks and bot.sannysoft all read them.
+  testing.expectEqual('20030107', navigator.productSub);
+  testing.expectEqual('', navigator.vendorSub);
+  testing.expectEqual('Google Inc.', navigator.vendor);
+  testing.expectEqual('en-GB', navigator.language);
   testing.expectEqual(true, Array.isArray(navigator.languages));
-  testing.expectEqual(2, navigator.languages.length);
-  testing.expectEqual('en-US', navigator.languages[0]);
-  testing.expectEqual('en', navigator.languages[1]);
+  // Three tags, captured from the reference Chrome. Chrome builds this from
+  // the OS preferred-languages list, so the two-tag form a naive derivation
+  // produces is a shape Chrome does not emit for this machine.
+  testing.expectEqual(3, navigator.languages.length);
+  testing.expectEqual('en-GB', navigator.languages[0]);
+  testing.expectEqual('en-US', navigator.languages[1]);
+  testing.expectEqual('en', navigator.languages[2]);
   testing.expectEqual(true, navigator.onLine);
   testing.expectEqual(true, navigator.cookieEnabled);
-  testing.expectEqual(true, navigator.hardwareConcurrency > 0);
-  testing.expectEqual(4, navigator.hardwareConcurrency);
+  testing.expectEqual(10, navigator.hardwareConcurrency);
   testing.expectEqual(0, navigator.maxTouchPoints);
-  testing.expectEqual('', navigator.vendor);
+  testing.expectEqual(true, navigator.pdfViewerEnabled);
   testing.expectEqual('Gecko', navigator.product);
   testing.expectEqual(false, navigator.javaEnabled());
   testing.expectEqual(false, navigator.webdriver);
 
   testing.expectEqual(null, navigator.doNotTrack);
 
-  // GPC must default to false — per https://w3c.github.io/gpc/#javascript-property
-  // the signal reflects an explicit user preference (Firefox defaults to false;
-  // Chrome doesn't expose the property at all). A true default makes
-  // GPC-compliant consent managers reject-all and skip their consent UI.
-  testing.expectEqual(false, navigator.globalPrivacyControl);
+  // Chrome does not expose globalPrivacyControl at all — Firefox does. While
+  // it was present, the browser carried a Firefox-shaped property on a
+  // navigator that claims to be Chrome. Consent managers already handle it
+  // being undefined, because that is what they see on every real Chrome.
+  testing.expectEqual(false, 'globalPrivacyControl' in navigator);
 
   // Every Navigator attribute must be a native accessor on the prototype
   for (const name of [
     'userAgent', 'appName', 'appCodeName', 'appVersion', 'platform',
     'language', 'languages', 'onLine', 'cookieEnabled', 'hardwareConcurrency',
     'deviceMemory', 'maxTouchPoints', 'vendor', 'product', 'webdriver',
-    'plugins', 'doNotTrack', 'globalPrivacyControl',
+    'plugins', 'mimeTypes', 'pdfViewerEnabled', 'doNotTrack',
+    'userActivation', 'connection', 'productSub', 'vendorSub',
   ]) {
     const desc = Object.getOwnPropertyDescriptor(Navigator.prototype, name);
     testing.expectEqual('function', typeof desc.get); // accessor on prototype
@@ -52,7 +64,7 @@
 </script>
 
 <script id=navigator_plugins_named_presence>
-  // No plugin is exposed, so PluginArray has no named properties at all.
+  // A name that isn't in the frozen list still resolves to nothing.
   testing.expectEqual(false, 'anything' in navigator.plugins);
   testing.expectEqual(false, Object.hasOwn(navigator.plugins, 'anything'));
   testing.expectEqual(null, navigator.plugins.namedItem('anything'));
@@ -64,7 +76,7 @@
 <script id=navigator_plugins_iterable>
   // WebIDL: indexed getter => @@iterator (Chrome: [...navigator.plugins] works)
   testing.expectEqual('function', typeof navigator.plugins[Symbol.iterator]);
-  testing.expectEqual(0, [...navigator.plugins].length);
+  testing.expectEqual(5, [...navigator.plugins].length);
 </script>
 
 <script id=navigator_native_descriptor_walk>
@@ -114,20 +126,38 @@
 </script>
 
 <script id=deviceMemory>
-  testing.expectEqual(8, navigator.deviceMemory);
+  testing.expectEqual(16, navigator.deviceMemory);
+</script>
+
+<script id=connection>
+  // Chromium-only: its absence is itself a "not Chrome" signal.
+  testing.expectEqual('4g', navigator.connection.effectiveType);
+  testing.expectEqual(1.5, navigator.connection.downlink);
+  testing.expectEqual(100, navigator.connection.rtt);
+  testing.expectEqual(false, navigator.connection.saveData);
+
+  // Same instance every time, and an EventTarget, so a page can listen for
+  // 'change' without throwing.
+  testing.expectEqual(true, navigator.connection === navigator.connection);
+  testing.expectEqual('function', typeof navigator.connection.addEventListener);
+  navigator.connection.addEventListener('change', () => {});
 </script>
 
 <script id=userAgentData>
   testing.expectEqual(true, navigator.userAgentData !== undefined);
   testing.expectEqual(false, navigator.userAgentData.mobile);
-  testing.expectEqual(true, navigator.userAgentData.platform.length > 0);
+  testing.expectEqual('macOS', navigator.userAgentData.platform);
 
-  const validUAPlatforms = ['macOS', 'Windows', 'Linux', 'FreeBSD', 'Unknown'];
-  testing.expectEqual(true, validUAPlatforms.includes(navigator.userAgentData.platform));
-
-  testing.expectEqual(1, navigator.userAgentData.brands.length);
-  testing.expectEqual('Lightpanda', navigator.userAgentData.brands[0].brand);
-  testing.expectEqual("1.0.0-", navigator.userAgentData.brands[0].version.substring(0,6));
+  // The brand list carries the GREASE entry Chrome injects, so a server that
+  // string-matches one known name rather than parsing the list gets it wrong.
+  const brands = navigator.userAgentData.brands;
+  testing.expectEqual(3, brands.length);
+  testing.expectEqual('Not=A?Brand', brands[0].brand);
+  testing.expectEqual('99', brands[0].version);
+  testing.expectEqual('Google Chrome', brands[1].brand);
+  testing.expectEqual('151', brands[1].version);
+  testing.expectEqual('Chromium', brands[2].brand);
+  testing.expectEqual('151', brands[2].version);
 
   // Same instance returned on repeated access
   testing.expectEqual(true, navigator.userAgentData === navigator.userAgentData);
@@ -136,7 +166,7 @@
   testing.expectEqual(false, json.mobile);
   testing.expectEqual(navigator.userAgentData.platform, json.platform);
   testing.expectEqual(true, Array.isArray(json.brands));
-  testing.expectEqual('Lightpanda', json.brands[0].brand);
+  testing.expectEqual('Not=A?Brand', json.brands[0].brand);
 </script>
 
 <script id=userAgentData_highEntropy type=module>
@@ -149,23 +179,34 @@
 
     await state.done(() => {
       testing.expectEqual(false, v.mobile);
-      testing.expectEqual(navigator.userAgentData.platform, v.platform);
-      testing.expectEqual(true, Array.isArray(v.brands));
-      testing.expectEqual(true, Array.isArray(v.fullVersionList));
-      testing.expectEqual('Lightpanda', v.fullVersionList[0].brand);
-      testing.expectEqual('1.0.0-', v.uaFullVersion.substring(0,6));
+      testing.expectEqual('macOS', v.platform);
+      testing.expectEqual('14.8.1', v.platformVersion);
+      testing.expectEqual('arm', v.architecture);
+      testing.expectEqual('64', v.bitness);
+      testing.expectEqual('', v.model);
       testing.expectEqual(false, v.wow64);
+      testing.expectEqual('151.0.7922.138', v.uaFullVersion);
+
+      // fullVersionList carries the four-part versions; brands carries the
+      // significant ones. Both project the same underlying list.
+      testing.expectEqual(3, v.fullVersionList.length);
+      testing.expectEqual('Not=A?Brand', v.fullVersionList[0].brand);
+      testing.expectEqual('99.0.0.0', v.fullVersionList[0].version);
+      testing.expectEqual('Google Chrome', v.fullVersionList[1].brand);
+      testing.expectEqual('151.0.7922.138', v.fullVersionList[1].version);
+
       testing.expectEqual(true, Array.isArray(v.formFactor));
       testing.expectEqual('Desktop', v.formFactor[0]);
     });
   }
 </script>
 
-<script id=getBattery type=module>
-  // Like Firefox, we don't expose navigator.getBattery. Sites already
-  // have to handle it being undefined, so this is a real-browser shape
-  // rather than a stub that always rejects.
-  testing.expectEqual('undefined', typeof navigator.getBattery);
+<script id=getBattery>
+  // Chromium ships getBattery and Firefox removed it. Omitting it gave this
+  // browser a Firefox-shaped hole while the rest of the profile claims to be
+  // Chrome, and a capture of Chrome 151 on Google showed reCAPTCHA calling
+  // it. Values are asserted in chrome_namespace.html.
+  testing.expectEqual('function', typeof navigator.getBattery);
 </script>
 
 

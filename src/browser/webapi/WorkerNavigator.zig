@@ -58,8 +58,8 @@ fn getAppCodeName(_: *const WorkerNavigator) []const u8 {
     return Navigator.getAppCodeName(&Navigator.init);
 }
 
-fn getAppVersion(_: *const WorkerNavigator) []const u8 {
-    return Navigator.getAppVersion(&Navigator.init);
+fn getAppVersion(_: *const WorkerNavigator, exec: *const Execution) []const u8 {
+    return Navigator.getAppVersion(&Navigator.init, exec);
 }
 
 fn getLanguage(_: *const WorkerNavigator, exec: *const Execution) []const u8 {
@@ -86,8 +86,12 @@ fn getProduct(_: *const WorkerNavigator) []const u8 {
     return Navigator.getProduct(&Navigator.init);
 }
 
-fn getGlobalPrivacyControl(_: *const WorkerNavigator) bool {
-    return Navigator.getGlobalPrivacyControl(&Navigator.init);
+fn getProductSub(_: *const WorkerNavigator) []const u8 {
+    return Navigator.getProductSub(&Navigator.init);
+}
+
+fn getVendorSub(_: *const WorkerNavigator) []const u8 {
+    return Navigator.getVendorSub(&Navigator.init);
 }
 
 fn getPlatform(_: *const WorkerNavigator) []const u8 {
@@ -127,7 +131,8 @@ pub const JsApi = struct {
     pub const deviceMemory = bridge.accessor(WorkerNavigator.getDeviceMemory, null, .{});
     pub const vendor = bridge.accessor(WorkerNavigator.getVendor, null, .{});
     pub const product = bridge.accessor(WorkerNavigator.getProduct, null, .{});
-    pub const globalPrivacyControl = bridge.accessor(WorkerNavigator.getGlobalPrivacyControl, null, .{});
+    pub const productSub = bridge.accessor(WorkerNavigator.getProductSub, null, .{});
+    pub const vendorSub = bridge.accessor(WorkerNavigator.getVendorSub, null, .{});
 
     pub const permissions = bridge.accessor(WorkerNavigator.getPermissions, null, .{});
     pub const storage = bridge.accessor(WorkerNavigator.getStorage, null, .{});

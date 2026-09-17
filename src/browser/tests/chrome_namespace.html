@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<script src="testing.js"></script>
+
+<script id=window_chrome_shape>
+  // Every Chrome page has window.chrome, extension or not. Its absence makes
+  // `'app' in window.chrome` throw, which is a louder signal than a false.
+  // Shape captured from a real Chrome 151.
+  testing.expectEqual('object', typeof window.chrome);
+  testing.expectEqual(true, 'app' in window.chrome);
+  testing.expectEqual('[object Object]', Object.prototype.toString.call(window.chrome));
+
+  // A plain object: members are own properties, in this order.
+  testing.expectEqual('loadTimes,csi,app', Object.keys(window.chrome).join(','));
+
+  // Only ever present in an extension context. Stealth tooling that adds it
+  // unconditionally is more detectable than tooling that omits it.
+  testing.expectEqual('undefined', typeof chrome.runtime);
+</script>
+
+<script id=chrome_app>
+  testing.expectEqual(
+    'isInstalled,getDetails,getIsInstalled,installState,runningState,InstallState,RunningState',
+    Object.keys(chrome.app).join(','));
+
+  testing.expectEqual(false, chrome.app.isInstalled);
+  testing.expectEqual(false, chrome.app.getIsInstalled());
+  testing.expectEqual(null, chrome.app.getDetails());
+  testing.expectEqual('not_installed', chrome.app.installState());
+  testing.expectEqual('cannot_run', chrome.app.runningState());
+  testing.expectEqual('disabled', chrome.app.InstallState.DISABLED);
+  testing.expectEqual('installed', chrome.app.InstallState.INSTALLED);
+  testing.expectEqual('not_installed', chrome.app.InstallState.NOT_INSTALLED);
+  testing.expectEqual('cannot_run', chrome.app.RunningState.CANNOT_RUN);
+  testing.expectEqual('ready_to_run', chrome.app.RunningState.READY_TO_RUN);
+  testing.expectEqual('running', chrome.app.RunningState.RUNNING);
+</script>
+
+<script id=chrome_csi_and_loadtimes>
+  testing.expectEqual('function', typeof chrome.csi);
+  testing.expectEqual('startE,onloadT,pageT,tran', Object.keys(chrome.csi()).join(','));
+  testing.expectEqual(15, chrome.csi().tran);
+
+  testing.expectEqual('function', typeof chrome.loadTimes);
+  const lt = chrome.loadTimes();
+  testing.expectEqual(13, Object.keys(lt).length);
+  testing.expectEqual('h2', lt.connectionInfo);
+  testing.expectEqual('h2', lt.npnNegotiatedProtocol);
+  testing.expectEqual(true, lt.wasFetchedViaSpdy);
+  testing.expectEqual('Other', lt.navigationType);
+</script>
+
+<script id=user_activation>
+  // reCAPTCHA read this six times in a single captured run — more often than
+  // screen size. Both false is what a freshly loaded page reports: a
+  // navigation is not an activation of the document it loads.
+  testing.expectEqual('object', typeof navigator.userActivation);
+  testing.expectEqual('UserActivation', navigator.userActivation.constructor.name);
+  testing.expectEqual(false, navigator.userActivation.isActive);
+  testing.expectEqual(false, navigator.userActivation.hasBeenActive);
+  testing.expectEqual(true, navigator.userActivation === navigator.userActivation);
+</script>
+
+<script id=no_global_privacy_control>
+  // Chrome does not expose this at all; Firefox does. Carrying it gave the
+  // browser a Firefox-shaped property while claiming to be Chrome.
+  testing.expectEqual(false, 'globalPrivacyControl' in navigator);
+</script>
+
+<script id=get_battery type=module>
+  {
+    // Chromium ships this and Firefox removed it, so a browser claiming
+    // Chrome has to have it. Values describe a desktop on mains power, which
+    // is what the rest of the profile claims to be.
+    const state = await testing.async();
+    testing.expectEqual('function', typeof navigator.getBattery);
+    const p = navigator.getBattery();
+    testing.expectTrue(p instanceof Promise);
+    const b = await p;
+    state.resolve();
+
+    await state.done(() => {
+      testing.expectEqual('BatteryManager', b.constructor.name);
+      testing.expectEqual(true, b.charging);
+      testing.expectEqual(0, b.chargingTime);
+      testing.expectEqual(Infinity, b.dischargingTime);
+      testing.expectEqual(1, b.level);
+      testing.expectEqual('function', typeof b.addEventListener);
+      b.addEventListener('levelchange', () => {});
+    });
+  }
+</script>

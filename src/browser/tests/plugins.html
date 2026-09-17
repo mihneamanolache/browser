@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<script src="testing.js"></script>
+
+<script id=plugins_frozen_list>
+  // Chrome 94 froze navigator.plugins to five entries, all aliases for the
+  // same built-in PDF viewer. An empty list is the anomaly, not this.
+  testing.expectEqual(5, navigator.plugins.length);
+
+  const names = [...navigator.plugins].map(p => p.name);
+  testing.expectEqual('PDF Viewer', names[0]);
+  testing.expectEqual('Chrome PDF Viewer', names[1]);
+  testing.expectEqual('Chromium PDF Viewer', names[2]);
+  testing.expectEqual('Microsoft Edge PDF Viewer', names[3]);
+  testing.expectEqual('WebKit built-in PDF', names[4]);
+
+  for (const plugin of navigator.plugins) {
+    testing.expectEqual('internal-pdf-viewer', plugin.filename);
+    testing.expectEqual('Portable Document Format', plugin.description);
+  }
+</script>
+
+<script id=plugins_identity>
+  // Chrome hands back the same object every time. A detector reads the list
+  // twice and compares; a fresh allocation per lookup fails that.
+  testing.expectEqual(true, navigator.plugins[0] === navigator.plugins[0]);
+  testing.expectEqual(true, navigator.plugins === navigator.plugins);
+  testing.expectEqual(true, navigator.mimeTypes === navigator.mimeTypes);
+
+  // Every plugin exposes the one shared MIME type list.
+  testing.expectEqual(true, navigator.mimeTypes[0] === navigator.plugins[0][0]);
+  testing.expectEqual(true, navigator.plugins[0][0] === navigator.plugins[4][0]);
+</script>
+
+<script id=plugins_accessors>
+  testing.expectEqual('PDF Viewer', navigator.plugins.item(0).name);
+  testing.expectEqual(null, navigator.plugins.item(5));
+  testing.expectEqual(null, navigator.plugins.item(-1));
+  testing.expectEqual(undefined, navigator.plugins[5]);
+
+  testing.expectEqual('PDF Viewer', navigator.plugins.namedItem('PDF Viewer').name);
+  testing.expectEqual(true, navigator.plugins['PDF Viewer'] === navigator.plugins[0]);
+  testing.expectEqual(null, navigator.plugins.namedItem('Flash'));
+
+  navigator.plugins.refresh(); // still a no-op, still must not throw
+  testing.expectEqual(5, navigator.plugins.length);
+</script>
+
+<script id=plugins_named_properties_unenumerable>
+  // [LegacyUnenumerableNamedProperties]: the names resolve but never show up
+  // in Object.keys or for-in.
+  testing.expectEqual(true, 'PDF Viewer' in navigator.plugins);
+  testing.expectEqual(false, Object.keys(navigator.plugins).includes('PDF Viewer'));
+</script>
+
+<script id=plugin_is_a_mimetype_collection>
+  const plugin = navigator.plugins[0];
+  testing.expectEqual(2, plugin.length);
+  testing.expectEqual('application/pdf', plugin[0].type);
+  testing.expectEqual('text/pdf', plugin[1].type);
+  testing.expectEqual('application/pdf', plugin.item(0).type);
+  testing.expectEqual(null, plugin.item(2));
+  testing.expectEqual(true, plugin['application/pdf'] === plugin[0]);
+  testing.expectEqual(null, plugin.namedItem('image/png'));
+  testing.expectEqual(2, [...plugin].length);
+</script>
+
+<script id=mime_types>
+  testing.expectEqual(2, navigator.mimeTypes.length);
+  testing.expectEqual('application/pdf', navigator.mimeTypes[0].type);
+  testing.expectEqual('pdf', navigator.mimeTypes[0].suffixes);
+  testing.expectEqual('text/pdf', navigator.mimeTypes[1].type);
+  testing.expectEqual('pdf', navigator.mimeTypes[1].suffixes);
+
+  testing.expectEqual(true, navigator.mimeTypes['application/pdf'] === navigator.mimeTypes[0]);
+  testing.expectEqual(null, navigator.mimeTypes.namedItem('image/png'));
+  testing.expectEqual(undefined, navigator.mimeTypes[2]);
+  testing.expectEqual(2, [...navigator.mimeTypes].length);
+
+  // Chrome points every frozen MIME type at the first plugin entry, whichever
+  // alias you reached it through.
+  testing.expectEqual('PDF Viewer', navigator.mimeTypes[0].enabledPlugin.name);
+  testing.expectEqual(true, navigator.plugins[3][1].enabledPlugin === navigator.plugins[0]);
+</script>
+
+<script id=plugins_prototypes>
+  // The constructors have to exist on the global and the instances have to be
+  // instances of them: feature detection checks both.
+  testing.expectEqual(true, navigator.plugins instanceof PluginArray);
+  testing.expectEqual(true, navigator.plugins[0] instanceof Plugin);
+  testing.expectEqual(true, navigator.mimeTypes instanceof MimeTypeArray);
+  testing.expectEqual(true, navigator.mimeTypes[0] instanceof MimeType);
+
+  testing.expectEqual('[object PluginArray]', Object.prototype.toString.call(navigator.plugins));
+  testing.expectEqual('[object Plugin]', Object.prototype.toString.call(navigator.plugins[0]));
+</script>

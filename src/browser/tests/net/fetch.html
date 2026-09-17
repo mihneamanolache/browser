@@ -478,10 +478,15 @@
       testing.expectEqual('fr', got['accept-language']);
       testing.expectEqual('a, b', got['x-multi']);
       testing.expectEqual(undefined, got['cookie']);
-      testing.expectEqual(true, got['user-agent'].includes('Lightpanda'));
-      testing.expectEqual(false, got['user-agent'].includes('Mozilla'));
-      testing.expectEqual(true, got['sec-ch-ua'].includes('Lightpanda'));
-      testing.expectEqual(false, got['sec-ch-ua'].includes('Chromium'));
+      // The baseline headers carry the fingerprint profile's identity, and
+      // the client hints travel as a set: Sec-Ch-Ua without the two
+      // low-entropy hints beside it is a shape no real Chrome produces.
+      testing.expectEqual(true, got['user-agent'].includes('Chrome/151'));
+      testing.expectEqual(true, got['user-agent'].startsWith('Mozilla/5.0'));
+      testing.expectEqual(true, got['sec-ch-ua'].includes('Chromium'));
+      testing.expectEqual(true, got['sec-ch-ua'].includes('Not=A?Brand'));
+      testing.expectEqual('?0', got['sec-ch-ua-mobile']);
+      testing.expectEqual('"macOS"', got['sec-ch-ua-platform']);
     });
   }
 </script>

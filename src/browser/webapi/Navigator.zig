@@ -17,18 +17,24 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 const std = @import("std");
-const builtin = @import("builtin");
+const lp = @import("lightpanda");
 
 const js = @import("../js/js.zig");
 const Frame = @import("../Frame.zig");
 const Execution = js.Execution;
 
 const PluginArray = @import("PluginArray.zig");
+const MimeTypeArray = PluginArray.MimeTypeArray;
 const Permissions = @import("Permissions.zig");
+const NetworkInformation = @import("net/NetworkInformation.zig");
+const UserActivation = @import("UserActivation.zig");
+const BatteryManager = @import("BatteryManager.zig");
 const ModelContext = @import("ModelContext.zig");
 const StorageManager = @import("StorageManager.zig");
 const NavigatorUAData = @import("NavigatorUAData.zig");
 const Geolocation = @import("geolocation/Geolocation.zig");
+
+const fingerprint = lp.fingerprint;
 
 const Navigator = @This();
 
@@ -36,16 +42,18 @@ comptime {
     // Ensure we don't cause an identity map conflict. Because _geolocation is
     // lazy and, for now, Zig orders the highest-aligned field first, none of
     // the other fields land at offset 0.
-    for ([_][]const u8{ "_plugins", "_permissions", "_storage", "_ua_data" }) |name| {
+    for ([_][]const u8{ "_permissions", "_storage", "_ua_data", "_user_activation" }) |name| {
         if (@offsetOf(Navigator, name) == 0) @compileError(name ++ " aliases the Navigator");
     }
 }
 
-_plugins: PluginArray = .{},
+_plugins: ?*PluginArray = null,
 _permissions: Permissions = .{},
 _geolocation: ?*Geolocation = null,
 _storage: StorageManager = .{},
 _ua_data: NavigatorUAData = .{},
+_user_activation: UserActivation = .{},
+_connection: ?*NetworkInformation = null,
 
 pub const init: Navigator = .{};
 
@@ -62,15 +70,20 @@ fn getDoNotTrack(_: *const Navigator) ?[]const u8 {
 }
 
 pub fn getAppName(_: *const Navigator) []const u8 {
-    return "Netscape";
+    return fingerprint.app_name;
 }
 
 pub fn getAppCodeName(_: *const Navigator) []const u8 {
-    return "Mozilla";
+    return fingerprint.app_code_name;
 }
 
-pub fn getAppVersion(_: *const Navigator) []const u8 {
-    return "1.0";
+/// The UA string minus its "Mozilla/" prefix, as every browser reports it.
+/// Derived from the same constant `getUserAgent` serves, so a `--user-agent`
+/// override that changes one without the other is impossible.
+pub fn getAppVersion(self: *const Navigator, exec: *const Execution) []const u8 {
+    const ua = self.getUserAgent(exec);
+    const prefix = "Mozilla/";
+    return if (std.mem.startsWith(u8, ua, prefix)) ua[prefix.len..] else ua;
 }
 
 pub fn getLanguage(self: *const Navigator, exec: *const Execution) []const u8 {
@@ -87,46 +100,51 @@ fn getCookieEnabled(_: *const Navigator) bool {
 }
 
 pub fn getHardwareConcurrency(_: *const Navigator) u32 {
-    return 4;
+    return fingerprint.hardware_concurrency;
 }
 
 pub fn getDeviceMemory(_: *const Navigator) f64 {
-    return 8.0;
+    return fingerprint.device_memory;
 }
 
 fn getMaxTouchPoints(_: *const Navigator) u32 {
-    return 0;
+    return fingerprint.max_touch_points;
 }
 
 pub fn getVendor(_: *const Navigator) []const u8 {
-    return "";
+    return fingerprint.vendor;
 }
 
 pub fn getProduct(_: *const Navigator) []const u8 {
-    return "Gecko";
+    return fingerprint.product;
+}
+
+/// Frozen constants on every Chromium build. All three of CreepJS,
+/// BrowserLeaks and bot.sannysoft read productSub, and a browser claiming
+/// Chrome without it is caught on the first check.
+pub fn getProductSub(_: *const Navigator) []const u8 {
+    return fingerprint.product_sub;
+}
+
+pub fn getVendorSub(_: *const Navigator) []const u8 {
+    return fingerprint.vendor_sub;
+}
+
+/// Chrome bundles a PDF viewer, so this is true there and has been since
+/// the plugin list was frozen. It is also what `navigator.plugins` being
+/// non-empty implies, and detectors cross-check the two.
+pub fn getPdfViewerEnabled(_: *const Navigator) bool {
+    return fingerprint.pdf_viewer_enabled;
 }
 
 fn getWebdriver(_: *const Navigator) bool {
     return false;
 }
 
-// Default to false: per https://w3c.github.io/gpc/#javascript-property the
-// signal reflects an explicit user preference, and none is configured here.
-// Firefox defaults to false; Chrome doesn't expose the property. Returning
-// true made GPC-compliant consent managers treat every page load as "reject
-// tracking" and skip their consent UI entirely.
-pub fn getGlobalPrivacyControl(_: *const Navigator) bool {
-    return false;
-}
-
+/// Fixed, not read from `builtin.os.tag`: the whole point of the profile is
+/// that a Linux and a macOS build are indistinguishable from a page.
 pub fn getPlatform(_: *const Navigator) []const u8 {
-    return switch (builtin.os.tag) {
-        .macos => "MacIntel",
-        .windows => "Win32",
-        .linux => "Linux x86_64",
-        .freebsd => "FreeBSD",
-        else => "Unknown",
-    };
+    return fingerprint.platform;
 }
 
 /// Returns whether Java is enabled (always false)
@@ -141,8 +159,44 @@ fn sendBeacon(_: *const Navigator, url: js.Value, data: ?js.Value) bool {
     return true;
 }
 
-fn getPlugins(self: *Navigator) *PluginArray {
-    return &self._plugins;
+/// Lazy: the plugin graph is a handful of allocations that most pages never
+/// touch, and building it needs a frame anyway.
+fn getPlugins(self: *Navigator, frame: *Frame) !*PluginArray {
+    if (self._plugins) |p| {
+        return p;
+    }
+    const p = try PluginArray.init(frame);
+    self._plugins = p;
+    return p;
+}
+
+/// The same array every `Plugin` exposes, so `navigator.mimeTypes[0]` and
+/// `navigator.plugins[0][0]` are the one object Chrome reports them as.
+fn getMimeTypes(self: *Navigator, frame: *Frame) !*MimeTypeArray {
+    const plugins = try self.getPlugins(frame);
+    return plugins.getMimeTypes();
+}
+
+/// Lazy, like _geolocation: NetworkInformation is an EventTarget, so it has
+/// to come from the factory with a prototype chain rather than live inline.
+fn getUserActivation(self: *Navigator) *UserActivation {
+    return &self._user_activation;
+}
+
+/// Resolves immediately. Chromium ships this and Firefox removed it, so a
+/// browser claiming Chrome has to have it — reCAPTCHA calls it.
+fn getBattery(_: *const Navigator, frame: *Frame) !js.Promise {
+    const manager = try BatteryManager.init(frame);
+    return frame.js.local.?.resolvePromise(manager);
+}
+
+fn getConnection(self: *Navigator, frame: *Frame) !*NetworkInformation {
+    if (self._connection) |c| {
+        return c;
+    }
+    const c = try NetworkInformation.init(frame);
+    self._connection = c;
+    return c;
 }
 
 fn getPermissions(self: *Navigator) *Permissions {
@@ -259,11 +313,13 @@ pub const JsApi = struct {
     pub const hardwareConcurrency = bridge.accessor(Navigator.getHardwareConcurrency, null, .{});
     pub const deviceMemory = bridge.accessor(Navigator.getDeviceMemory, null, .{});
     pub const maxTouchPoints = bridge.accessor(Navigator.getMaxTouchPoints, null, .{});
+    pub const pdfViewerEnabled = bridge.accessor(Navigator.getPdfViewerEnabled, null, .{});
     pub const vendor = bridge.accessor(Navigator.getVendor, null, .{});
     pub const product = bridge.accessor(Navigator.getProduct, null, .{});
+    pub const productSub = bridge.accessor(Navigator.getProductSub, null, .{});
+    pub const vendorSub = bridge.accessor(Navigator.getVendorSub, null, .{});
     pub const webdriver = bridge.accessor(Navigator.getWebdriver, null, .{});
     pub const doNotTrack = bridge.accessor(Navigator.getDoNotTrack, null, .{});
-    pub const globalPrivacyControl = bridge.accessor(Navigator.getGlobalPrivacyControl, null, .{});
 
     pub const javaEnabled = bridge.function(Navigator.javaEnabled, .{});
     pub const sendBeacon = bridge.function(Navigator.sendBeacon, .{});
@@ -271,6 +327,10 @@ pub const JsApi = struct {
     pub const storage = bridge.accessor(Navigator.getStorage, null, .{});
     pub const userAgentData = bridge.accessor(Navigator.getUserAgentData, null, .{});
     pub const plugins = bridge.accessor(Navigator.getPlugins, null, .{});
+    pub const mimeTypes = bridge.accessor(Navigator.getMimeTypes, null, .{});
+    pub const connection = bridge.accessor(Navigator.getConnection, null, .{});
+    pub const userActivation = bridge.accessor(Navigator.getUserActivation, null, .{});
+    pub const getBattery = bridge.function(Navigator.getBattery, .{});
     pub const geolocation = bridge.accessor(Navigator.getGeolocation, null, .{});
     pub const modelContext = bridge.accessor(Navigator.getModelContext, null, .{});
     pub const registerProtocolHandler = bridge.function(Navigator.registerProtocolHandler, .{});

@@ -351,11 +351,20 @@ pub fn waitForFrame() !void {
 pub fn htmlRunner(comptime path: []const u8, opts: HtmlRunnerOpts) !void {
     defer reset();
 
-    var inject_scripts: [1][]const u8 = undefined;
+    // testing.js keys "am I running under the test runner?" off this marker.
+    // It used to sniff the user agent for "Lightpanda/", but the UA is now
+    // Chrome's byte for byte — that is the entire point of the fingerprint
+    // profile — so it no longer tells the runner apart from a developer who
+    // opened the fixture in a real browser. Sniffing a UA that is designed to
+    // be indistinguishable silently turned guarded assertions into no-ops.
+    const runner_marker = "window.__LIGHTPANDA_TEST_RUNNER__ = true;";
+    var inject_scripts: [2][]const u8 = .{ runner_marker, undefined };
+    var inject_count: usize = 1;
     if (opts.inject_script) |script| {
-        inject_scripts[0] = script;
-        test_session.inject_scripts = inject_scripts[0..1];
+        inject_scripts[1] = script;
+        inject_count = 2;
     }
+    test_session.inject_scripts = inject_scripts[0..inject_count];
     defer test_session.inject_scripts = &.{};
 
     test_session.load_resources = opts.load_resources;

@@ -1643,7 +1643,7 @@ test "MCP - screenshot: inline image, file, unsafe path" {
     out.clearRetainingCapacity();
     const to_file = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"screenshot\",\"arguments\":{\"path\":\"" ++ path ++ "\",\"selector\":\"#hoverTarget\"}}}";
     try router.handleMessage(server, testing.arena_allocator, to_file);
-    try testing.expect(std.mem.indexOf(u8, out.written(), "Saved 1920x") != null);
+    try testing.expect(std.mem.indexOf(u8, out.written(), "Saved 1512x") != null);
     try testing.expect(std.mem.indexOf(u8, out.written(), "\"type\":\"image\"") == null);
     const png = try std.Io.Dir.cwd().readFileAlloc(lp.io, path, testing.arena_allocator, .limited(1024 * 1024));
     try testing.expect(std.mem.startsWith(u8, png, "\x89PNG\r\n\x1a\n"));

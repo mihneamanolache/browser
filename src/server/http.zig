@@ -863,11 +863,17 @@ pub fn buildJSONVersionResponse(app: *const App, port: u16) ![]const u8 {
             .message = "--host is a wildcard (0.0.0.0 / ::) without --advertise-host; clients on other hosts will need --advertise-host to reach the CDP endpoint",
         });
     }
+    // Automation detectors read /json/version too, and a CDP client that
+    // connects to "Lightpanda/1.0" and then sees a Chrome UA in-page has
+    // found a contradiction for free. Both fields carry the profile's
+    // identity; the real build stays available under its own key.
     const body_format =
         "{{" ++
-        "\"Browser\": \"Lightpanda/1.0\", " ++
+        "\"Browser\": \"" ++ lp.fingerprint.cdp_browser ++ "\", " ++
         "\"Protocol-Version\": \"1.3\", " ++
-        "\"User-Agent\": \"Lightpanda/1.0\", " ++
+        "\"User-Agent\": \"" ++ lp.fingerprint.user_agent ++ "\", " ++
+        "\"V8-Version\": \"" ++ lp.fingerprint.chrome_full_version ++ "\", " ++
+        "\"WebKit-Version\": \"537.36\", " ++
         "\"Lightpanda-Version\": \"" ++ lp.build_config.version ++ "\", " ++
         "\"webSocketDebuggerUrl\": \"ws://{s}:{d}/\"" ++
         "}}";

@@ -7,8 +7,10 @@
 </body>
 
 <!--
-  The viewport reported by window.innerWidth / innerHeight is currently
-  hardcoded at 1920×1080. matchMedia evaluates against the same dimensions.
+  window.innerWidth / innerHeight report the layout viewport, 1512×774: the
+  fingerprint profile's maximized 1512×982 window minus the taskbar and the
+  browser's own UI. matchMedia evaluates against the same dimensions, except
+  for the device-* features, which resolve against the 1512×982 screen.
 -->
 
 <script id=matchMedia_basic>
@@ -41,7 +43,7 @@
 
 <script id=matchMedia_orientation>
 {
-  // 1920×1080 is landscape.
+  // 1512×774 is landscape.
   testing.expectEqual(true, window.matchMedia('(orientation: landscape)').matches);
   testing.expectEqual(false, window.matchMedia('(orientation: portrait)').matches);
 }
@@ -57,18 +59,19 @@
 
 <script id=matchMedia_device_width_height>
 {
-  // The deprecated device-* features resolve against the same 1920×1080
-  // viewport as window.screen.width / .height.
+  // The deprecated device-* features describe the output device, so they
+  // resolve against window.screen (1512×982) rather than the layout
+  // viewport (1512×774).
   testing.expectEqual(true,  window.matchMedia('(min-device-width: 1px)').matches);
-  testing.expectEqual(true,  window.matchMedia('(min-device-width: 1920px)').matches);
-  testing.expectEqual(false, window.matchMedia('(min-device-width: 1921px)').matches);
-  testing.expectEqual(true,  window.matchMedia('(max-device-width: 1920px)').matches);
-  testing.expectEqual(false, window.matchMedia('(max-device-width: 1919px)').matches);
-  testing.expectEqual(true,  window.matchMedia('(device-width: 1920px)').matches);
+  testing.expectEqual(true,  window.matchMedia('(min-device-width: 1512px)').matches);
+  testing.expectEqual(false, window.matchMedia('(min-device-width: 1513px)').matches);
+  testing.expectEqual(true,  window.matchMedia('(max-device-width: 1512px)').matches);
+  testing.expectEqual(false, window.matchMedia('(max-device-width: 1511px)').matches);
+  testing.expectEqual(true,  window.matchMedia('(device-width: 1512px)').matches);
 
-  testing.expectEqual(true,  window.matchMedia('(min-device-height: 1080px)').matches);
-  testing.expectEqual(false, window.matchMedia('(min-device-height: 1081px)').matches);
-  testing.expectEqual(true,  window.matchMedia('(device-height: 1080px)').matches);
+  testing.expectEqual(true,  window.matchMedia('(min-device-height: 982px)').matches);
+  testing.expectEqual(false, window.matchMedia('(min-device-height: 983px)').matches);
+  testing.expectEqual(true,  window.matchMedia('(device-height: 982px)').matches);
 
   // .media round-trips the query as written.
   const mql = window.matchMedia('(min-device-width: 1px)');
@@ -122,9 +125,9 @@
 
 <script id=matchMedia_em_units>
 {
-  // 1em = 16px. 30em = 480px ≤ 1920px → matches.
+  // 1em = 16px. 30em = 480px ≤ 1512px → matches.
   testing.expectEqual(true,  window.matchMedia('(min-width: 30em)').matches);
-  // 121em = 1936px > 1920px → does not match.
+  // 121em = 1936px > 1512px → does not match.
   testing.expectEqual(false, window.matchMedia('(min-width: 121em)').matches);
   // u32-overflowing em / rem fails closed instead of panicking.
   testing.expectEqual(false, window.matchMedia('(min-width: 268435456em)').matches);

@@ -27,8 +27,19 @@
   }
 </script>
 
+<script id="secure_context">
+  // Derived from the origin, exactly as Chrome does it: the test server is
+  // loopback, which is a trustworthy origin, so this is true. On plain http
+  // to a public host it is false, which is the honest Chrome answer.
+  testing.expectEqual(true, window.isSecureContext);
+
+  // Needs COOP+COEP, which no ordinary page sends. Pages read it to decide
+  // whether SharedArrayBuffer is usable.
+  testing.expectEqual(false, window.crossOriginIsolated);
+</script>
+
 <script id="devicePixelRatio">
   {
-    testing.expectEqual(1, window.devicePixelRatio);
+    testing.expectEqual(2, window.devicePixelRatio);
   }
 </script>

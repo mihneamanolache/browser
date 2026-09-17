@@ -4,9 +4,36 @@
 <script id=screen>
   let screen = window.screen;
   if (testing.IS_TEST_RUNNER) {
-    testing.expectEqual(1920, screen.width);
-    testing.expectEqual(1080, screen.height);
+    testing.expectEqual(1512, screen.width);
+    testing.expectEqual(982, screen.height);
+
+    // Available area is the screen minus the taskbar, derived from the
+    // screen size rather than fixed, so an emulated screen stays consistent.
+    testing.expectEqual(1512, screen.availWidth);
+    testing.expectEqual(861, screen.availHeight);
+
+    // A maximized window fills the available area; the difference between
+    // outerHeight and innerHeight is the browser's own UI. A zero difference
+    // reads as "no browser chrome", i.e. headless.
+    testing.expectEqual(1512, window.outerWidth);
+    testing.expectEqual(861, window.outerHeight);
+    testing.expectEqual(1512, window.innerWidth);
+    testing.expectEqual(774, window.innerHeight);
+    testing.expectEqual(87, window.outerHeight - window.innerHeight);
+    testing.expectEqual(0, screen.availLeft);
+    testing.expectEqual(38, screen.availTop);
+    testing.expectEqual(false, screen.isExtended);
+
+    // Maximized on the primary display.
+    testing.expectEqual(0, window.screenX);
+    testing.expectEqual(0, window.screenY);
+    testing.expectEqual(window.screenX, window.screenLeft);
+    testing.expectEqual(window.screenY, window.screenTop);
   }
+
+  testing.expectEqual(30, screen.colorDepth);
+  testing.expectEqual(30, screen.pixelDepth);
+  testing.expectEqual(2, window.devicePixelRatio);
 
   let orientation = screen.orientation;
   testing.expectEqual(0, orientation.angle);

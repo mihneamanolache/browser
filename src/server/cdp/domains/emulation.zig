@@ -325,8 +325,11 @@ test "cdp.Emulation: setDeviceMetricsOverride screenWidth/screenHeight reach win
     v = try ls.local.exec("screen.width === 2560 && screen.height === 1440 && innerWidth === 1024 && innerHeight === 720", null);
     try testing.expect(v.toBool());
 
+    // Clearing restores the default viewport, where the screen and the layout
+    // viewport are deliberately different: a maximized window's content area
+    // is the screen minus the taskbar and the browser's own UI.
     try ctx.processMessage(.{ .id = 3, .method = "Emulation.clearDeviceMetricsOverride" });
-    v = try ls.local.exec("screen.width === innerWidth && screen.height === innerHeight", null);
+    v = try ls.local.exec("screen.width === 1512 && screen.height === 982 && innerWidth === 1512 && innerHeight === 774", null);
     try testing.expect(v.toBool());
 }
 
@@ -423,7 +426,7 @@ test "cdp.Emulation: setUserAgentOverride acceptLanguage drives navigator.langua
     const frame = bc.mainFrame() orelse unreachable;
 
     // The default locale reaches both navigator and ICU.
-    try expectJs(frame, "navigator.language === 'en-US' && navigator.languages.join() === 'en-US,en'");
+    try expectJs(frame, "navigator.language === 'en-GB' && navigator.languages.join() === 'en-GB,en-US,en'");
     try expectJs(frame, "Intl.DateTimeFormat().resolvedOptions().locale === navigator.language");
 
     try ctx.processMessage(.{
@@ -499,9 +502,10 @@ test "cdp.Emulation: setDeviceMetricsOverride and clear" {
     _ = try bc.session.createPage();
     const page = bc.mainPage().?;
 
-    // Defaults to the compile-time viewport before any override.
-    try testing.expectEqual(1920, page.getViewport().width);
-    try testing.expectEqual(1080, page.getViewport().height);
+    // Defaults to the compile-time viewport before any override: the layout
+    // viewport of a maximized 1512x982 window, not the screen itself.
+    try testing.expectEqual(1512, page.getViewport().width);
+    try testing.expectEqual(774, page.getViewport().height);
 
     try ctx.processMessage(.{
         .id = 8,
@@ -524,8 +528,8 @@ test "cdp.Emulation: setDeviceMetricsOverride and clear" {
     });
 
     try ctx.expectSentResult(null, .{ .id = 9 });
-    try testing.expectEqual(1920, page.getViewport().width);
-    try testing.expectEqual(1080, page.getViewport().height);
+    try testing.expectEqual(1512, page.getViewport().width);
+    try testing.expectEqual(774, page.getViewport().height);
 }
 
 test "cdp.Emulation: setGeolocationOverride and clear" {
@@ -538,11 +542,11 @@ test "cdp.Emulation: setGeolocationOverride and clear" {
     try ctx.processMessage(.{
         .id = 1,
         .method = "Emulation.setGeolocationOverride",
-        .params = .{ .latitude = 48.8584, .longitude = 2.2945, .accuracy = 10 },
+        .params = .{ .latitude = 48.8584, .longitude = 2.2774, .accuracy = 10 },
     });
     try ctx.expectSentResult(null, .{ .id = 1 });
     try testing.expectEqual(48.8584, browser.geolocation_override.?.latitude);
-    try testing.expectEqual(2.2945, browser.geolocation_override.?.longitude);
+    try testing.expectEqual(2.2774, browser.geolocation_override.?.longitude);
 
     // no coordinates => emulate "position unavailable" (stored as null)
     try ctx.processMessage(.{ .id = 2, .method = "Emulation.setGeolocationOverride" });

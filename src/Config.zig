@@ -23,6 +23,7 @@ const lp = @import("lightpanda");
 const cli = @import("cli.zig");
 const string = @import("string.zig");
 const dump = @import("browser/dump.zig");
+const fingerprint = @import("fingerprint.zig");
 const Mime = @import("browser/Mime.zig");
 
 const WebBotAuthConfig = @import("network/WebBotAuth.zig").Config;
@@ -737,10 +738,13 @@ pub fn locale(self: *const Config) [:0]const u8 {
     };
 }
 
-pub fn timezone(self: *const Config) ?[:0]const u8 {
+/// Never null: with no --timezone, the fingerprint profile's zone is used
+/// rather than the host's, so the same build reports the same
+/// Date#getTimezoneOffset and Intl time zone wherever it runs.
+pub fn timezone(self: *const Config) [:0]const u8 {
     return switch (self.mode) {
-        inline .serve, .fetch, .mcp, .agent => |opts| opts.timezone,
-        else => null,
+        inline .serve, .fetch, .mcp, .agent => |opts| opts.timezone orelse fingerprint.timezone,
+        else => fingerprint.timezone,
     };
 }
 
@@ -960,43 +964,23 @@ pub const WaitUntil = enum {
 /// HTTP header values shared across Http and Client.
 /// Must be initialized with an allocator that outlives all HTTP connections.
 pub const HttpHeaders = struct {
-    const user_agent_base: [:0]const u8 = "Lightpanda/1.0";
+    // The UA we present when --user-agent is not given. Comes from the
+    // fingerprint profile so the header and navigator.userAgent are the same
+    // string, not two strings that happen to match today.
+    const user_agent_base: [:0]const u8 = fingerprint.user_agent;
 
-    const Brand = struct {
-        brand: [:0]const u8,
-        version: [:0]const u8,
-        full_version: []const u8,
-    };
+    /// Client-hint values. These live in the fingerprint profile alongside
+    /// navigator.userAgentData, which is built from the same brand list, so
+    /// the HTTP side and the JS side cannot drift.
+    pub const sec_ch_ua = fingerprint.sec_ch_ua;
+    pub const sec_ch_ua_full_version_list = fingerprint.sec_ch_ua_full_version_list;
+    pub const sec_ch_ua_mobile = fingerprint.sec_ch_ua_mobile;
+    pub const sec_ch_ua_platform = fingerprint.sec_ch_ua_platform;
 
-    /// Source of truth for client-hints brand data. Both the Sec-Ch-Ua
-    /// HTTP header and navigator.userAgentData.brands derive from this
-    /// list, so the two sides cannot drift.
-    pub const brands = [_]Brand{
-        .{ .brand = "Lightpanda", .version = "1", .full_version = lp.build_config.version },
-    };
-
-    pub const sec_ch_ua: [:0]const u8 = blk: {
-        var out: [:0]const u8 = "";
-        for (brands, 0..) |b, i| {
-            const sep = if (i == 0) "" else ", ";
-            out = out ++ sep ++ "\"" ++ b.brand ++ "\";v=\"" ++ b.version ++ "\"";
-        }
-        break :blk out;
-    };
-
-    pub const sec_ch_ua_full_version_list: [:0]const u8 = blk: {
-        var out: [:0]const u8 = "";
-        for (brands, 0..) |b, i| {
-            const sep = if (i == 0) "" else ", ";
-            out = out ++ sep ++ "\"" ++ b.brand ++ "\";v=\"" ++ b.full_version ++ "\"";
-        }
-        break :blk out;
-    };
-
-    // The neutral default: some bot-protection frontends (e.g. Akamai on
-    // canada.ca) RST the HTTP/2 stream when a client sends Accept-Encoding
-    // without Accept-Language.
-    const default_locale: [:0]const u8 = "en-US";
+    // Some bot-protection frontends (e.g. Akamai on canada.ca) RST the
+    // HTTP/2 stream when a client sends Accept-Encoding without
+    // Accept-Language, so this is never empty.
+    const default_locale: [:0]const u8 = fingerprint.locale;
 
     // Document-navigation Accept value Chrome sends.
     pub const navigation_accept: [:0]const u8 = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
@@ -1058,7 +1042,13 @@ pub const HttpHeaders = struct {
         errdefer if (proxy_bearer_header) |hdr| allocator.free(hdr);
 
         var buf: [64]u8 = undefined;
-        const accept_language: AcceptLanguage = try .init(allocator, acceptLanguageFor(&buf, config.locale()));
+        // With no --locale, use the profile's captured header verbatim; the
+        // derivation below only has to cover overrides.
+        const al_value = if (std.mem.eql(u8, config.locale(), fingerprint.locale))
+            fingerprint.accept_language
+        else
+            acceptLanguageFor(&buf, config.locale());
+        const accept_language: AcceptLanguage = try .init(allocator, al_value);
 
         return .{
             .user_agent = user_agent,
@@ -1416,9 +1406,13 @@ test "Config: locale drives http_headers" {
     {
         var config = try Config.init(allocator, "test", .{ .serve = .{ .host = "127.0.0.1" } });
         defer config.deinit(allocator);
-        try std.testing.expectEqualStrings("en-US,en;q=0.9", config.http_headers.accept_language.header);
-        try std.testing.expectEqual(2, config.http_headers.accept_language.languages.len);
-        try std.testing.expectEqualStrings("en", config.http_headers.accept_language.languages[1]);
+        // The default is the captured header, so navigator.languages is the
+        // three tags real Chrome reports on this machine.
+        try std.testing.expectEqualStrings("en-GB,en-US;q=0.9,en;q=0.8", config.http_headers.accept_language.header);
+        try std.testing.expectEqual(3, config.http_headers.accept_language.languages.len);
+        try std.testing.expectEqualStrings("en-GB", config.http_headers.accept_language.languages[0]);
+        try std.testing.expectEqualStrings("en-US", config.http_headers.accept_language.languages[1]);
+        try std.testing.expectEqualStrings("en", config.http_headers.accept_language.languages[2]);
     }
     {
         var config = try Config.init(allocator, "test", .{ .serve = .{ .host = "127.0.0.1", .locale = "fr" } });

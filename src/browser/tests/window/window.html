@@ -8,8 +8,10 @@
   testing.expectEqual(window, window.self);
   testing.expectEqual(null, window.opener);
 
-  testing.expectEqual(1080, innerHeight);
-  testing.expectEqual(1920, innerWidth);
+  // The layout viewport, which is the maximized window minus the taskbar
+  // and the browser's own UI — not the screen.
+  testing.expectEqual(774, innerHeight);
+  testing.expectEqual(1512, innerWidth);
 </script>
 
 <script id=load>
@@ -184,12 +186,12 @@
 </script>
 
 <script id=screen>
-  testing.expectEqual(1920, screen.width);
-  testing.expectEqual(1080, screen.height);
-  testing.expectEqual(1920, screen.availWidth);
-  testing.expectEqual(1040, screen.availHeight);
-  testing.expectEqual(24, screen.colorDepth);
-  testing.expectEqual(24, screen.pixelDepth);
+  testing.expectEqual(1512, screen.width);
+  testing.expectEqual(982, screen.height);
+  testing.expectEqual(1512, screen.availWidth);
+  testing.expectEqual(861, screen.availHeight);
+  testing.expectEqual(30, screen.colorDepth);
+  testing.expectEqual(30, screen.pixelDepth);
   testing.expectEqual(screen, window.screen);
 </script>
 

@@ -70,8 +70,12 @@
   testing.expectEqual(UNMASKED_VENDOR_WEBGL, 0x9245);
   testing.expectEqual(UNMASKED_RENDERER_WEBGL, 0x9246);
 
-  testing.expectEqual("", ctx.getParameter(UNMASKED_VENDOR_WEBGL));
-  testing.expectEqual("", ctx.getParameter(UNMASKED_RENDERER_WEBGL));
+  // Chrome masks the real GPU behind VENDOR/RENDERER and only reveals the
+  // true strings through this extension.
+  testing.expectEqual("Google Inc. (Apple)", ctx.getParameter(UNMASKED_VENDOR_WEBGL));
+  testing.expectEqual(
+    "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    ctx.getParameter(UNMASKED_RENDERER_WEBGL));
 }
 
 // WEBGL_lose_context
@@ -93,5 +97,171 @@
 
   testing.expectTrue(ctx === element.getContext('webgl'));
   testing.expectEqual(null, element.getContext('2d'));
+}
+</script>
+
+<script id=getParameter_identity>
+{
+  const ctx = document.createElement('canvas').getContext('webgl');
+
+  testing.expectEqual('WebKit', ctx.getParameter(ctx.VENDOR));
+  testing.expectEqual('WebKit WebGL', ctx.getParameter(0x1F01));
+  testing.expectEqual('WebGL 1.0 (OpenGL ES 2.0 Chromium)', ctx.getParameter(0x1F02));
+  testing.expectEqual('WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)', ctx.getParameter(0x8B8C));
+
+  // An unrecognized pname is null, as on a real context.
+  testing.expectEqual(null, ctx.getParameter(0x1234));
+}
+</script>
+
+<script id=getParameter_limits>
+{
+  const ctx = document.createElement('canvas').getContext('webgl');
+
+  testing.expectEqual(16384, ctx.getParameter(0x0D33)); // MAX_TEXTURE_SIZE
+  testing.expectEqual(16, ctx.getParameter(0x8869));    // MAX_VERTEX_ATTRIBS
+  testing.expectEqual(24, ctx.getParameter(0x0D56));    // DEPTH_BITS
+  testing.expectEqual(8, ctx.getParameter(0x0D52));     // RED_BITS
+
+  // MAX_VIEWPORT_DIMS is an Int32Array in Chrome, and callers index into it.
+  const dims = ctx.getParameter(0x0D3A);
+  testing.expectEqual(true, dims instanceof Int32Array);
+  testing.expectEqual(16384, dims[0]);
+  testing.expectEqual(16384, dims[1]);
+
+  const lineWidth = ctx.getParameter(0x846E); // ALIASED_LINE_WIDTH_RANGE
+  testing.expectEqual(true, lineWidth instanceof Float32Array);
+  testing.expectEqual(1, lineWidth[0]);
+
+  // Booleans and boolean arrays keep their types too.
+  testing.expectEqual(false, ctx.getParameter(0x0BE2));  // BLEND
+  testing.expectEqual(true, ctx.getParameter(0x0BD0));   // DITHER
+  testing.expectEqual(4, ctx.getParameter(0x0C23).length); // COLOR_WRITEMASK
+}
+</script>
+
+<script id=renderer_setup_path_completes>
+{
+  // The reason getContext no longer returns null: a renderer has to be able
+  // to run its whole setup path without throwing. Nothing draws; nothing
+  // raises either.
+  const ctx = document.createElement('canvas').getContext('webgl');
+
+  const vs = ctx.createShader(0x8B31); // VERTEX_SHADER
+  const fs = ctx.createShader(0x8B30); // FRAGMENT_SHADER
+  testing.expectEqual(true, vs instanceof WebGLShader);
+
+  ctx.shaderSource(vs, 'void main() {}');
+  ctx.compileShader(vs);
+  // A false COMPILE_STATUS is what sends consumers into their throw path.
+  testing.expectEqual(true, ctx.getShaderParameter(vs, 0x8B81));
+  testing.expectEqual('', ctx.getShaderInfoLog(vs));
+  testing.expectEqual('void main() {}', ctx.getShaderSource(vs));
+
+  const program = ctx.createProgram();
+  ctx.attachShader(program, vs);
+  ctx.attachShader(program, fs);
+  ctx.linkProgram(program);
+  testing.expectEqual(true, ctx.getProgramParameter(program, 0x8B82)); // LINK_STATUS
+  testing.expectEqual('', ctx.getProgramInfoLog(program));
+  ctx.useProgram(program);
+
+  const buffer = ctx.createBuffer();
+  testing.expectEqual(true, buffer instanceof WebGLBuffer);
+  ctx.bindBuffer(0x8892, buffer);
+  ctx.bufferData(0x8892, new Float32Array([0, 1, 2]), 0x88E4);
+
+  const texture = ctx.createTexture();
+  testing.expectEqual(true, texture instanceof WebGLTexture);
+  ctx.bindTexture(0x0DE1, texture);
+  ctx.texParameteri(0x0DE1, 0x2801, 0x2601);
+
+  const fb = ctx.createFramebuffer();
+  ctx.bindFramebuffer(0x8D40, fb);
+  ctx.framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, texture, 0);
+  testing.expectEqual(0x8CD5, ctx.checkFramebufferStatus(0x8D40)); // COMPLETE
+
+  const loc = ctx.getUniformLocation(program, 'uColor');
+  testing.expectEqual(true, loc instanceof WebGLUniformLocation);
+  ctx.uniform4f(loc, 1, 1, 1, 1);
+  ctx.uniformMatrix4fv(loc, false, new Float32Array(16));
+
+  ctx.viewport(0, 0, 300, 150);
+  ctx.clearColor(0, 0, 0, 1);
+  ctx.clear(0x4000);
+  ctx.drawArrays(0x0004, 0, 3);
+  ctx.drawElements(0x0004, 3, 0x1403, 0);
+  ctx.flush();
+  ctx.finish();
+
+  // Still no error, and the context is not lost.
+  testing.expectEqual(0, ctx.getError());
+  testing.expectEqual(false, ctx.isContextLost());
+
+  ctx.deleteBuffer(buffer);
+  ctx.deleteTexture(texture);
+  ctx.deleteProgram(program);
+}
+</script>
+
+<script id=gl_constants>
+{
+  // Every renderer reads these off the context; a context missing them is
+  // not a browser. Spot-check across the groups.
+  const ctx = document.createElement('canvas').getContext('webgl');
+  testing.expectEqual(4, ctx.TRIANGLES);
+  testing.expectEqual(0x1406, ctx.FLOAT);
+  testing.expectEqual(0x8892, ctx.ARRAY_BUFFER);
+  testing.expectEqual(0x8B31, ctx.VERTEX_SHADER);
+  testing.expectEqual(0x8B81, ctx.COMPILE_STATUS);
+  testing.expectEqual(0x0DE1, ctx.TEXTURE_2D);
+  testing.expectEqual(0x84C0, ctx.TEXTURE0);
+  testing.expectEqual(0x84DF, ctx.TEXTURE31);
+  testing.expectEqual(0x00004000, ctx.COLOR_BUFFER_BIT);
+  testing.expectEqual(0x8CD5, ctx.FRAMEBUFFER_COMPLETE);
+  testing.expectEqual(0, ctx.NO_ERROR);
+
+  // They live on the prototype, as in Chrome, and are read-only.
+  testing.expectEqual(4, WebGLRenderingContext.prototype.TRIANGLES);
+}
+</script>
+
+<script id=method_arity>
+{
+  // Function.prototype.length is part of the surface a detector reads.
+  const ctx = document.createElement('canvas').getContext('webgl');
+  testing.expectEqual(3, ctx.drawArrays.length);
+  testing.expectEqual(4, ctx.drawElements.length);
+  testing.expectEqual(4, ctx.viewport.length);
+  testing.expectEqual(1, ctx.clear.length);
+  testing.expectEqual(2, ctx.bindBuffer.length);
+}
+</script>
+
+<script id=context_attributes>
+{
+  const ctx = document.createElement('canvas').getContext('webgl');
+  const attrs = ctx.getContextAttributes();
+  testing.expectEqual(true, attrs.alpha);
+  testing.expectEqual(true, attrs.antialias);
+  testing.expectEqual(true, attrs.depth);
+  testing.expectEqual(false, attrs.stencil);
+  testing.expectEqual('default', attrs.powerPreference);
+
+  const precision = ctx.getShaderPrecisionFormat(0x8B31, 0x8DF2); // HIGH_FLOAT
+  testing.expectEqual(127, precision.rangeMin);
+  testing.expectEqual(23, precision.precision);
+}
+</script>
+
+<script id=drawing_buffer_size>
+{
+  const canvas = document.createElement('canvas');
+  canvas.setAttribute('width', '640');
+  canvas.setAttribute('height', '480');
+  const ctx = canvas.getContext('webgl');
+  testing.expectEqual(640, ctx.drawingBufferWidth);
+  testing.expectEqual(480, ctx.drawingBufferHeight);
+  testing.expectEqual(true, ctx.canvas === canvas);
 }
 </script>

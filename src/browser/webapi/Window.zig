@@ -27,6 +27,7 @@ const History = @import("History.zig");
 const Navigation = @import("navigation/Navigation.zig");
 const Crypto = @import("Crypto.zig");
 const CSS = @import("CSS.zig");
+const Chrome = @import("Chrome.zig");
 const Navigator = @import("Navigator.zig");
 const ModelContext = @import("ModelContext.zig");
 const Screen = @import("Screen.zig");
@@ -53,6 +54,7 @@ const Scheduler = @import("Scheduler.zig");
 const Notification = @import("../../Notification.zig");
 
 const log = lp.log;
+const fingerprint = lp.fingerprint;
 
 const Execution = js.Execution;
 
@@ -68,6 +70,7 @@ _proto: *EventTarget,
 _frame: *Frame,
 _document: *Document,
 _css: CSS = .init,
+_chrome: Chrome = .{},
 _crypto: Crypto = .init,
 _console: Console = .init,
 _navigator: Navigator = .init,
@@ -268,6 +271,10 @@ fn setVisualViewport(self: *Window, value: js.Value) void {
 
 fn getCrypto(self: *Window) *Crypto {
     return &self._crypto;
+}
+
+fn getChrome(self: *Window) *Chrome {
+    return &self._chrome;
 }
 
 fn getCSS(self: *Window) *CSS {
@@ -917,6 +924,43 @@ fn getInnerWidth(_: *const Window, frame: *Frame) u32 {
     return frame.page.getViewport().width;
 }
 
+/// The whole browser window, chrome included. A maximized window fills the
+/// available screen area, so this is derived from `screen` rather than from
+/// the layout viewport: `outerHeight - innerHeight` is then the height of
+/// the tab strip and omnibox, which is what a real Chrome reports and what
+/// detectors check for (a zero difference means "no browser UI" — headless).
+fn getOuterWidth(_: *const Window, frame: *Frame) u32 {
+    const viewport = frame.page.getViewport();
+    return fingerprint.outerWidth(viewport.screen_width orelse viewport.width);
+}
+
+fn getOuterHeight(_: *const Window, frame: *Frame) u32 {
+    const viewport = frame.page.getViewport();
+    return fingerprint.outerHeight(viewport.screen_height orelse viewport.height);
+}
+
+/// Where the window sits on the virtual screen. A maximized window on the
+/// primary display is at the origin.
+fn getScreenX(_: *const Window) i32 {
+    return 0;
+}
+
+fn getScreenY(_: *const Window) i32 {
+    return 0;
+}
+
+/// Whether the document runs in a secure context. Chrome derives this from
+/// the origin — https and loopback yes, plain http no — so hardcoding either
+/// answer is itself a tell. `file:` and `about:` are trustworthy in Chrome
+/// too.
+fn getIsSecureContext(_: *const Window, frame: *Frame) bool {
+    const url = frame.url;
+    if (std.mem.startsWith(u8, url, "file:") or std.mem.startsWith(u8, url, "about:")) {
+        return true;
+    }
+    return URL.isPotentiallyTrustworthy(url);
+}
+
 // Faux-layout viewport height, used to decide whether an element is already
 // within view (e.g. scrollIntoViewIfNeeded).
 pub fn getInnerHeight(_: *const Window, frame: *Frame) u32 {
@@ -1168,6 +1212,10 @@ pub const JsApi = struct {
     pub const navigation = bridge.accessor(Window.getNavigation, Window.setNavigation, .{});
     pub const crypto = bridge.accessor(Window.getCrypto, null, .{});
     pub const CSS = bridge.accessor(Window.getCSS, null, .{});
+
+    // Present on every Chrome page, extension or not. Its absence makes
+    // `'app' in window.chrome` throw, which is louder than a false.
+    pub const chrome = bridge.accessor(Window.getChrome, null, .{});
     pub const customElements = bridge.accessor(Window.getCustomElements, null, .{});
     pub const onload = bridge.accessor(Window.getOnLoad, Window.setOnLoad, .{});
     pub const onpageshow = bridge.accessor(Window.getOnPageShow, Window.setOnPageShow, .{});
@@ -1216,18 +1264,28 @@ pub const JsApi = struct {
     pub const scroll = bridge.function(Window.scrollTo, .{});
     pub const scrollBy = bridge.function(Window.scrollBy, .{});
 
-    // Return false since we don't have secure-context-only APIs implemented
-    // (webcam, geolocation, clipboard, etc.)
-    // This is safer and could help avoid processing errors by hinting at
-    // sites not to try to access those features
-    pub const isSecureContext = bridge.property(false, .{ .template = false });
+    pub const isSecureContext = bridge.accessor(Window.getIsSecureContext, null, .{});
+
+    // Cross-origin isolation needs COOP+COEP headers, which no ordinary page
+    // sends. Chrome reports false here for all but a handful of sites, and a
+    // page reads it to decide whether SharedArrayBuffer is usable.
+    pub const crossOriginIsolated = bridge.property(false, .{ .template = false });
 
     // [Replaceable] (CSSOM-View): the getter reads the page's runtime viewport
     // (overridable via Emulation.setDeviceMetricsOverride); the setter overwrites
     // the attribute rather than throwing.
     pub const innerWidth = bridge.accessor(Window.getInnerWidth, Window.setInnerWidth, .{});
     pub const innerHeight = bridge.accessor(Window.getInnerHeight, Window.setInnerHeight, .{});
-    pub const devicePixelRatio = bridge.property(1, .{ .template = false, .readonly = false });
+    pub const devicePixelRatio = bridge.property(fingerprint.device_pixel_ratio, .{ .template = false, .readonly = false });
+
+    // [Replaceable] like innerWidth/innerHeight, but read-only in practice:
+    // nothing in-process resizes the window.
+    pub const outerWidth = bridge.accessor(Window.getOuterWidth, null, .{});
+    pub const outerHeight = bridge.accessor(Window.getOuterHeight, null, .{});
+    pub const screenX = bridge.accessor(Window.getScreenX, null, .{});
+    pub const screenY = bridge.accessor(Window.getScreenY, null, .{});
+    pub const screenLeft = bridge.accessor(Window.getScreenX, null, .{});
+    pub const screenTop = bridge.accessor(Window.getScreenY, null, .{});
 
     pub const opener = bridge.accessor(Window.getOpener, Window.setOpener, .{});
     pub const closed = bridge.accessor(Window.getClosed, null, .{});

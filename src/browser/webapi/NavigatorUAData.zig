@@ -16,11 +16,12 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-const builtin = @import("builtin");
+const lp = @import("lightpanda");
 
-const Config = @import("../../Config.zig");
 const js = @import("../js/js.zig");
 const Execution = js.Execution;
+
+const fingerprint = lp.fingerprint;
 
 const NavigatorUAData = @This();
 
@@ -32,15 +33,15 @@ const Brand = struct {
 };
 
 fn getBrands(_: *const NavigatorUAData) []const Brand {
-    return brandList();
+    return brandList(.version);
 }
 
 fn getMobile(_: *const NavigatorUAData) bool {
-    return false;
+    return fingerprint.mobile;
 }
 
 fn getPlatform(_: *const NavigatorUAData) []const u8 {
-    return uaPlatform();
+    return fingerprint.ua_platform;
 }
 
 pub fn toJSON(_: *const NavigatorUAData) struct {
@@ -49,72 +50,52 @@ pub fn toJSON(_: *const NavigatorUAData) struct {
     platform: []const u8,
 } {
     return .{
-        .mobile = false,
-        .brands = brandList(),
-        .platform = uaPlatform(),
+        .mobile = fingerprint.mobile,
+        .brands = brandList(.version),
+        .platform = fingerprint.ua_platform,
     };
 }
 
 fn getHighEntropyValues(_: *const NavigatorUAData, hints: []const []const u8, exec: *const Execution) !js.Promise {
-    // This should always return `brands` + `mobile` + `platform` and then whatever
-    // "hints" field is requested (assuming the browser has permission), but it's
-    // also valid to just return everything.
-
+    // Per spec this always returns `brands` + `mobile` + `platform` plus
+    // whichever "hints" were asked for. Returning everything regardless is
+    // also valid, and is what Chrome does for the low-entropy set.
     _ = hints;
 
-    const brands = brandList();
-
     return exec.js.local.?.resolvePromise(.{
-        .brands = brandList(),
-        .mobile = false,
-        .platform = uaPlatform(),
-        .architecture = uaArchitecture(),
-        .bitness = uaBitness(),
-        .model = "",
-        .platformVersion = "",
-        .uaFullVersion = if (brands.len > 0) brands[0].version else "1.0.0.0",
-        .fullVersionList = brands,
-        .wow64 = false,
-        .formFactor = [_][]const u8{"Desktop"},
+        .brands = brandList(.version),
+        .mobile = fingerprint.mobile,
+        .platform = fingerprint.ua_platform,
+        .architecture = fingerprint.architecture,
+        .bitness = fingerprint.bitness,
+        .model = fingerprint.model,
+        .platformVersion = fingerprint.platform_version,
+        .uaFullVersion = fingerprint.chrome_full_version,
+        .fullVersionList = brandList(.full_version),
+        .wow64 = fingerprint.wow64,
+        .formFactor = fingerprint.form_factors,
     });
 }
 
-fn brandList() []const Brand {
+/// Projects the shared brand list onto the two-field shape this API exposes,
+/// picking either the significant or the four-part version. The `Sec-Ch-Ua`
+/// headers project the same list, so the two can never disagree.
+fn brandList(comptime which: enum { version, full_version }) []const Brand {
     const out = comptime blk: {
-        const src = &Config.HttpHeaders.brands;
-        var arr: [src.len]Brand = undefined;
-        for (src, 0..) |b, i| {
-            arr[i] = .{ .brand = b.brand, .version = b.full_version };
+        var arr: [fingerprint.brands.len]Brand = undefined;
+        for (fingerprint.brands, 0..) |b, i| {
+            arr[i] = .{
+                .brand = b.brand,
+                .version = switch (which) {
+                    .version => b.version,
+                    .full_version => b.full_version,
+                },
+            };
         }
         const final = arr;
         break :blk final;
     };
     return &out;
-}
-
-fn uaPlatform() []const u8 {
-    return switch (builtin.os.tag) {
-        .macos => "macOS",
-        .windows => "Windows",
-        .linux => "Linux",
-        .freebsd => "FreeBSD",
-        else => "Unknown",
-    };
-}
-
-fn uaArchitecture() []const u8 {
-    return switch (builtin.cpu.arch) {
-        .x86, .x86_64 => "x86",
-        .aarch64, .aarch64_be, .arm, .armeb => "arm",
-        else => "",
-    };
-}
-
-fn uaBitness() []const u8 {
-    return switch (builtin.cpu.arch) {
-        .x86_64, .aarch64, .aarch64_be, .powerpc64, .powerpc64le, .riscv64 => "64",
-        else => "32",
-    };
 }
 
 pub const JsApi = struct {

@@ -5,7 +5,7 @@
 
 <!--
   Inline `@media` rules are evaluated against the hardcoded viewport
-  (1920×1080). When the query matches, the inner declarations participate
+  (1512×982). When the query matches, the inner declarations participate
   in the visibility cascade exactly as if they were written at the top
   level. When it doesn't, they are dropped.
 
@@ -14,11 +14,11 @@
 -->
 
 <style>
-  /* Matches: 1920px ≥ 768px → #hide-on-desktop should be hidden. */
+  /* Matches: 1512px ≥ 768px → #hide-on-desktop should be hidden. */
   @media (min-width: 768px) {
     #hide-on-desktop { display: none; }
   }
-  /* Doesn't match: 1920px > 767px → #hide-on-mobile stays visible. */
+  /* Doesn't match: 1512px > 767px → #hide-on-mobile stays visible. */
   @media (max-width: 767px) {
     #hide-on-mobile { display: none; }
   }

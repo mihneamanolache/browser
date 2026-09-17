@@ -1897,8 +1897,10 @@ test "cdp.frame: getLayoutMetrics" {
 
     _ = try ctx.loadBrowserContext(.{ .id = "BID-9", .url = "hi.html", .target_id = "FID-000000000X".* });
 
-    const width = 1920;
-    const height = 1080;
+    // The layout viewport, not the screen: the default is a maximized
+    // 1512x982 window minus the taskbar and the browser's own UI.
+    const width = 1512;
+    const height = 774;
 
     try ctx.processMessage(.{ .id = 12, .method = "Page.getLayoutMetrics" });
     try ctx.expectSentResult(.{

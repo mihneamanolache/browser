@@ -30,6 +30,7 @@ const PerformanceObserver = @import("PerformanceObserver.zig");
 
 const Execution = js.Execution;
 const Allocator = std.mem.Allocator;
+const fingerprint = lp.fingerprint;
 
 // https://w3c.github.io/resource-timing/#dfn-resource-timing-buffer-size-limit
 const DEFAULT_RESOURCE_BUFFER_SIZE = 250;
@@ -113,7 +114,7 @@ pub fn now(self: *const Performance) f64 {
     return @as(f64, @floatFromInt(elapsed)) / 1000.0;
 }
 
-fn getTimeOrigin(self: *const Performance) f64 {
+pub fn getTimeOrigin(self: *const Performance) f64 {
     // Return as milliseconds
     return @as(f64, @floatFromInt(self._time_origin)) / 1000.0;
 }
@@ -633,6 +634,30 @@ pub fn inlineHandler(self: *const Performance, typ: lp.String) ?js.Function.Glob
     return null;
 }
 
+/// `performance.memory` — non-standard, Chrome-only, and widely read both
+/// by real profiling code and by detectors (its absence says "not Chrome").
+///
+/// The limit is the profile's constant, but the two sizes come from the live
+/// isolate: a frozen `usedJSHeapSize` is trivially caught by allocating a
+/// few megabytes and reading it again. Chrome reports these at 100KB
+/// granularity so the exact allocation pattern is not a side channel, and
+/// quantizing here matches that and hides the fact that the underlying heap
+/// is not Chrome's.
+const MemoryInfo = struct {
+    jsHeapSizeLimit: f64,
+    totalJSHeapSize: f64,
+    usedJSHeapSize: f64,
+};
+
+fn getMemory(_: *const Performance, exec: *const Execution) MemoryInfo {
+    const stats = exec.session.browser.env.isolate.getHeapStatistics();
+    return .{
+        .jsHeapSizeLimit = fingerprint.js_heap_size_limit,
+        .totalJSHeapSize = fingerprint.quantizeHeapSize(stats.total_heap_size),
+        .usedJSHeapSize = fingerprint.quantizeHeapSize(stats.used_heap_size),
+    };
+}
+
 fn getOnResourceTimingBufferFull(self: *const Performance) ?js.Function.Global {
     return self._on_buffer_full;
 }
@@ -754,6 +779,7 @@ pub const JsApi = struct {
     pub const timing = bridge.accessor(Performance.getTiming, null, .{ .exposed = .window });
     pub const navigation = bridge.accessor(Performance.getNavigation, null, .{ .exposed = .window });
     pub const eventCounts = bridge.accessor(Performance.getEventCounts, null, .{ .exposed = .window });
+    pub const memory = bridge.accessor(Performance.getMemory, null, .{ .exposed = .window });
     pub const onresourcetimingbufferfull = bridge.accessor(Performance.getOnResourceTimingBufferFull, Performance.setOnResourceTimingBufferFull, .{});
 };
 

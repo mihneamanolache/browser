@@ -16,9 +16,13 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+const lp = @import("lightpanda");
+
 const js = @import("../js/js.zig");
 const Frame = @import("../Frame.zig");
 const EventTarget = @import("EventTarget.zig");
+
+const fingerprint = lp.fingerprint;
 
 pub fn registerTypes() []const type {
     return &.{
@@ -33,6 +37,7 @@ pub const Proto = EventTarget;
 
 _proto: *EventTarget,
 _orientation: ?*Orientation = null,
+_on_change: ?js.Function.Global = null,
 
 pub fn asEventTarget(self: *Screen) *EventTarget {
     return self._proto;
@@ -57,6 +62,49 @@ pub fn getHeight(_: *const Screen, frame: *Frame) u32 {
     return viewport.screen_height orelse viewport.height;
 }
 
+/// Screen minus the OS taskbar. Derived rather than fixed so an emulated
+/// screen size (Emulation.setDeviceMetricsOverride) still yields a
+/// self-consistent avail size instead of a constant that contradicts it.
+pub fn getAvailWidth(self: *const Screen, frame: *Frame) u32 {
+    return fingerprint.availWidth(self.getWidth(frame));
+}
+
+pub fn getAvailHeight(self: *const Screen, frame: *Frame) u32 {
+    return fingerprint.availHeight(self.getHeight(frame));
+}
+
+/// Where the usable area starts. On macOS the menu bar pushes it down; on
+/// Windows both are 0. CreepJS, BrowserLeaks and FingerprintJS each read
+/// these, and a browser reporting 0/0 while claiming macOS contradicts its
+/// own availHeight.
+fn getAvailLeft(_: *const Screen) i32 {
+    return fingerprint.avail_left;
+}
+
+fn getAvailTop(_: *const Screen) i32 {
+    return fingerprint.avail_top;
+}
+
+/// Whether a second display is attached. Part of the Window Management API
+/// and readable without permission.
+fn getIsExtended(_: *const Screen) bool {
+    return fingerprint.is_extended;
+}
+
+fn getOnChange(self: *const Screen) ?js.Function.Global {
+    return self._on_change;
+}
+
+fn setOnChange(self: *Screen, cb: ?js.Function.Global) void {
+    self._on_change = cb;
+}
+
+// The property handler for a JS-side dispatchEvent (see EventManager.dispatch).
+pub fn inlineHandler(self: *const Screen, typ: lp.String) ?js.Function.Global {
+    if (typ.eql(.wrap("change"))) return self._on_change;
+    return null;
+}
+
 pub const JsApi = struct {
     pub const bridge = js.Bridge(Screen);
 
@@ -68,10 +116,14 @@ pub const JsApi = struct {
 
     pub const width = bridge.accessor(Screen.getWidth, null, .{});
     pub const height = bridge.accessor(Screen.getHeight, null, .{});
-    pub const availWidth = bridge.accessor(Screen.getWidth, null, .{});
-    pub const availHeight = bridge.property(1040, .{ .template = false });
-    pub const colorDepth = bridge.property(24, .{ .template = false });
-    pub const pixelDepth = bridge.property(24, .{ .template = false });
+    pub const availWidth = bridge.accessor(Screen.getAvailWidth, null, .{});
+    pub const availHeight = bridge.accessor(Screen.getAvailHeight, null, .{});
+    pub const availLeft = bridge.accessor(Screen.getAvailLeft, null, .{});
+    pub const availTop = bridge.accessor(Screen.getAvailTop, null, .{});
+    pub const isExtended = bridge.accessor(Screen.getIsExtended, null, .{});
+    pub const onchange = bridge.accessor(Screen.getOnChange, Screen.setOnChange, .{});
+    pub const colorDepth = bridge.property(fingerprint.color_depth, .{ .template = false });
+    pub const pixelDepth = bridge.property(fingerprint.pixel_depth, .{ .template = false });
     pub const orientation = bridge.accessor(Screen.getOrientation, null, .{});
 };
 
@@ -79,6 +131,7 @@ pub const Orientation = struct {
     pub const Proto = EventTarget;
 
     _proto: *EventTarget,
+    _on_change: ?js.Function.Global = null,
 
     pub fn init(frame: *Frame) !*Orientation {
         return frame._factory.eventTarget(Orientation{
@@ -88,6 +141,19 @@ pub const Orientation = struct {
 
     pub fn asEventTarget(self: *Orientation) *EventTarget {
         return self._proto;
+    }
+
+    pub fn inlineHandler(self: *const Orientation, typ: lp.String) ?js.Function.Global {
+        if (typ.eql(.wrap("change"))) return self._on_change;
+        return null;
+    }
+
+    fn getOnChange(self: *const Orientation) ?js.Function.Global {
+        return self._on_change;
+    }
+
+    fn setOnChange(self: *Orientation, cb: ?js.Function.Global) void {
+        self._on_change = cb;
     }
 
     pub const JsApi = struct {
@@ -101,5 +167,6 @@ pub const Orientation = struct {
 
         pub const angle = bridge.property(0, .{ .template = false });
         pub const @"type" = bridge.property("landscape-primary", .{ .template = false });
+        pub const onchange = bridge.accessor(Orientation.getOnChange, Orientation.setOnChange, .{});
     };
 };
