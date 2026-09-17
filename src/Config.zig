@@ -24,6 +24,7 @@ const cli = @import("cli.zig");
 const string = @import("string.zig");
 const dump = @import("browser/dump.zig");
 const fingerprint = @import("fingerprint.zig");
+const fingerprint_startup = @import("fingerprint/startup.zig");
 const Mime = @import("browser/Mime.zig");
 
 const WebBotAuthConfig = @import("network/WebBotAuth.zig").Config;
@@ -277,7 +278,17 @@ const CommonOptions = .{
     .{ .name = "web_bot_auth_keyid", .type = ?[]const u8 },
     .{ .name = "web_bot_auth_domain", .type = ?[]const u8 },
     .{ .name = "user_agent", .type = ?[]const u8, .validator = userAgentValidator },
-    .{ .name = "locale", .type = [:0]const u8, .default = HttpHeaders.default_locale, .validator = localeValidator },
+    // Which machine and which region this process claims to be. Left unset,
+    // both are drawn from --fingerprint-seed (a fresh random one per run), and
+    // the region follows the proxy's exit IP when there is a proxy.
+    .{ .name = "fingerprint", .type = ?[]const u8 },
+    .{ .name = "fingerprint_region", .type = ?[]const u8 },
+    .{ .name = "fingerprint_seed", .type = ?u64 },
+    .{ .name = "fingerprint_list", .type = bool },
+    // No compile-time default: with no --locale the profile's region supplies
+    // one, and the region can be chosen at startup (by seed, by name, or from
+    // the proxy's exit country). Resolved in `Config.locale()`.
+    .{ .name = "locale", .type = ?[:0]const u8, .validator = localeValidator },
     .{ .name = "timezone", .type = ?[:0]const u8, .validator = timezoneValidator },
     .{ .name = "block_private_networks", .type = bool },
     .{ .name = "block_cidrs", .type = ?[]const u8, .validator = accumulateValidator },
@@ -515,6 +526,13 @@ pub fn init(allocator: Allocator, exec_name: []const u8, mode: Mode) !Config {
         .http_headers = undefined,
     };
     if (modeNeedsHttp(mode)) {
+        // The identity has to be settled before this: HttpHeaders bakes the
+        // UA and Accept-Language, and App.init hands the locale and time zone
+        // to ICU. Selecting later would leave the HTTP side describing one
+        // machine and the JS side another.
+        if (comptime !lp.IS_TEST) {
+            fingerprint_startup.apply(allocator, &config);
+        }
         config.http_headers = try HttpHeaders.init(allocator, &config);
     }
 
@@ -605,6 +623,37 @@ pub fn v8MaxHeapMb(self: *const Config) ?u32 {
     return switch (self.mode) {
         inline .serve, .fetch, .mcp, .agent => |opts| opts.v8_max_heap_mb,
         else => unreachable,
+    };
+}
+
+/// The named machine profile, or null to let the seed choose.
+pub fn fingerprintMachine(self: *const Config) ?[]const u8 {
+    return switch (self.mode) {
+        inline .serve, .fetch, .mcp, .agent => |opts| opts.fingerprint,
+        else => null,
+    };
+}
+
+/// A named region, the literal "auto" to follow the proxy's exit IP, or null
+/// for "auto when there is a proxy, the seed's region otherwise".
+pub fn fingerprintRegion(self: *const Config) ?[]const u8 {
+    return switch (self.mode) {
+        inline .serve, .fetch, .mcp, .agent => |opts| opts.fingerprint_region,
+        else => null,
+    };
+}
+
+pub fn fingerprintSeed(self: *const Config) ?u64 {
+    return switch (self.mode) {
+        inline .serve, .fetch, .mcp, .agent => |opts| opts.fingerprint_seed,
+        else => null,
+    };
+}
+
+pub fn fingerprintList(self: *const Config) bool {
+    return switch (self.mode) {
+        inline .serve, .fetch, .mcp, .agent => |opts| opts.fingerprint_list,
+        else => false,
     };
 }
 
@@ -731,10 +780,13 @@ pub fn userAgent(self: *const Config) ?[]const u8 {
     };
 }
 
+/// Never null: with no --locale, the selected region's tag is used rather
+/// than the host's, so the same build reports the same navigator.language
+/// wherever it runs.
 pub fn locale(self: *const Config) [:0]const u8 {
     return switch (self.mode) {
-        inline .serve, .fetch, .mcp, .agent => |opts| opts.locale,
-        else => HttpHeaders.default_locale,
+        inline .serve, .fetch, .mcp, .agent => |opts| opts.locale orelse fingerprint.locale(),
+        else => fingerprint.locale(),
     };
 }
 
@@ -743,8 +795,8 @@ pub fn locale(self: *const Config) [:0]const u8 {
 /// Date#getTimezoneOffset and Intl time zone wherever it runs.
 pub fn timezone(self: *const Config) [:0]const u8 {
     return switch (self.mode) {
-        inline .serve, .fetch, .mcp, .agent => |opts| opts.timezone orelse fingerprint.timezone,
-        else => fingerprint.timezone,
+        inline .serve, .fetch, .mcp, .agent => |opts| opts.timezone orelse fingerprint.timezone(),
+        else => fingerprint.timezone(),
     };
 }
 
@@ -964,28 +1016,30 @@ pub const WaitUntil = enum {
 /// HTTP header values shared across Http and Client.
 /// Must be initialized with an allocator that outlives all HTTP connections.
 pub const HttpHeaders = struct {
-    // The UA we present when --user-agent is not given. Comes from the
-    // fingerprint profile so the header and navigator.userAgent are the same
-    // string, not two strings that happen to match today.
-    const user_agent_base: [:0]const u8 = fingerprint.user_agent;
-
-    /// Client-hint values. These live in the fingerprint profile alongside
-    /// navigator.userAgentData, which is built from the same brand list, so
-    /// the HTTP side and the JS side cannot drift.
+    /// Client-hint values that are the same on every desktop Chrome 151.
+    /// They live in the fingerprint profile alongside navigator.userAgentData,
+    /// which is built from the same brand list, so the HTTP side and the JS
+    /// side cannot drift.
     pub const sec_ch_ua = fingerprint.sec_ch_ua;
     pub const sec_ch_ua_full_version_list = fingerprint.sec_ch_ua_full_version_list;
     pub const sec_ch_ua_mobile = fingerprint.sec_ch_ua_mobile;
-    pub const sec_ch_ua_platform = fingerprint.sec_ch_ua_platform;
 
-    // Some bot-protection frontends (e.g. Akamai on canada.ca) RST the
-    // HTTP/2 stream when a client sends Accept-Encoding without
-    // Accept-Language, so this is never empty.
-    const default_locale: [:0]const u8 = fingerprint.locale;
+    /// The ones that follow the selected machine. Functions rather than
+    /// constants, but still resolved once at startup, so the header and
+    /// navigator.userAgent are the same string and not two that happen to
+    /// match today.
+    pub const secChUaPlatform = fingerprint.secChUaPlatform;
+    pub const userAgentBase = fingerprint.userAgent;
 
     // Document-navigation Accept value Chrome sends.
     pub const navigation_accept: [:0]const u8 = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 
     user_agent: [:0]const u8, // User agent value (e.g. "Lightpanda/1.0")
+    /// Whether `user_agent` was allocated here. A pointer comparison against
+    /// the profile's own string would be wrong: the profile is selected just
+    /// before this is built, and comparing against whatever it returns later
+    /// is a free() of a static string waiting to happen.
+    owns_user_agent: bool,
 
     proxy_bearer_header: ?[:0]const u8,
 
@@ -1027,13 +1081,14 @@ pub const HttpHeaders = struct {
     };
 
     pub fn init(allocator: Allocator, config: *const Config) !HttpHeaders {
+        const owns_user_agent = config.userAgent() != null or config.userAgentSuffix() != null;
         const user_agent: [:0]const u8 = if (config.userAgent()) |ua|
             try allocator.dupeZ(u8, ua)
         else if (config.userAgentSuffix()) |suffix|
-            try std.fmt.allocPrintSentinel(allocator, "{s} {s}", .{ user_agent_base, suffix }, 0)
+            try std.fmt.allocPrintSentinel(allocator, "{s} {s}", .{ userAgentBase(), suffix }, 0)
         else
-            user_agent_base;
-        errdefer if (config.userAgent() != null or config.userAgentSuffix() != null) allocator.free(user_agent);
+            userAgentBase();
+        errdefer if (owns_user_agent) allocator.free(user_agent);
 
         const proxy_bearer_header: ?[:0]const u8 = if (config.proxyBearerToken()) |token|
             try std.fmt.allocPrintSentinel(allocator, "Proxy-Authorization: Bearer {s}", .{token}, 0)
@@ -1044,14 +1099,15 @@ pub const HttpHeaders = struct {
         var buf: [64]u8 = undefined;
         // With no --locale, use the profile's captured header verbatim; the
         // derivation below only has to cover overrides.
-        const al_value = if (std.mem.eql(u8, config.locale(), fingerprint.locale))
-            fingerprint.accept_language
+        const al_value = if (std.mem.eql(u8, config.locale(), fingerprint.locale()))
+            fingerprint.acceptLanguage()
         else
             acceptLanguageFor(&buf, config.locale());
         const accept_language: AcceptLanguage = try .init(allocator, al_value);
 
         return .{
             .user_agent = user_agent,
+            .owns_user_agent = owns_user_agent,
             .proxy_bearer_header = proxy_bearer_header,
             .accept_language = accept_language,
         };
@@ -1061,7 +1117,7 @@ pub const HttpHeaders = struct {
         if (self.proxy_bearer_header) |hdr| {
             allocator.free(hdr);
         }
-        if (self.user_agent.ptr != user_agent_base.ptr) {
+        if (self.owns_user_agent) {
             allocator.free(self.user_agent);
         }
         self.accept_language.deinit(allocator);
@@ -1568,7 +1624,7 @@ pub fn validateUserAgent(ua: []const u8) !void {
     }
 }
 
-fn localeValidator(allocator: Allocator, args: *std.process.Args.Iterator, field: *[:0]const u8) !void {
+fn localeValidator(allocator: Allocator, args: *std.process.Args.Iterator, field: *?[:0]const u8) !void {
     const str = args.next() orelse return error.MissingArgument;
     validateLocale(str) catch |err| {
         log.fatal(.app, "invalid option value", .{ .arg = "--locale", .value = str, .err = err, .hint = "must be a BCP 47 tag such as en-US, de or zh-Hant-TW" });

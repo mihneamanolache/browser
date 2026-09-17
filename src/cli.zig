@@ -524,6 +524,9 @@ pub fn Builder(comptime commands: anytype) type {
 
         /// Turns a snake_case string to kebab-case in comptime.
         fn toKebabCase(comptime str: []const u8) [str.len]u8 {
+            // Called once per option name per mode, so the default quota runs
+            // out once the option table passes a few dozen entries.
+            @setEvalBranchQuota(10_000);
             var output: [str.len]u8 = str[0..str.len].*;
             for (&output) |*c| if (c.* == '_') {
                 c.* = '-';

@@ -402,12 +402,12 @@ fn parseLengthPx(value: []const u8) ?u32 {
 const testing = std.testing;
 
 test "MediaQuery: empty query is false" {
-    try testing.expect(!matches("", Viewport.default));
-    try testing.expect(!matches("   ", Viewport.default));
+    try testing.expect(!matches("", Viewport.default()));
+    try testing.expect(!matches("   ", Viewport.default()));
 }
 
 test "MediaQuery: bare media types" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("all", v));
     try testing.expect(matches("screen", v));
     try testing.expect(matches("ALL", v));
@@ -418,12 +418,12 @@ test "MediaQuery: bare media types" {
 }
 
 test "MediaQuery: unknown ident is false" {
-    try testing.expect(!matches("foo", Viewport.default));
-    try testing.expect(!matches("braille", Viewport.default));
+    try testing.expect(!matches("foo", Viewport.default()));
+    try testing.expect(!matches("braille", Viewport.default()));
 }
 
 test "MediaQuery: min-width on 1512x982 viewport" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(min-width: 1px)", v));
     try testing.expect(matches("(min-width: 600px)", v));
     try testing.expect(matches("(min-width: 1512px)", v));
@@ -432,7 +432,7 @@ test "MediaQuery: min-width on 1512x982 viewport" {
 }
 
 test "MediaQuery: max-width" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(max-width: 1512px)", v));
     try testing.expect(matches("(max-width: 2000px)", v));
     try testing.expect(!matches("(max-width: 1511px)", v));
@@ -440,7 +440,7 @@ test "MediaQuery: max-width" {
 }
 
 test "MediaQuery: width (exact)" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(width: 1512px)", v));
     try testing.expect(!matches("(width: 1513px)", v));
     try testing.expect(!matches("(width: 1511px)", v));
@@ -448,7 +448,7 @@ test "MediaQuery: width (exact)" {
 
 test "MediaQuery: min-height / max-height / height" {
     // The layout viewport, which is shorter than the screen.
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(min-height: 774px)", v));
     try testing.expect(!matches("(min-height: 775px)", v));
     try testing.expect(matches("(max-height: 774px)", v));
@@ -458,7 +458,7 @@ test "MediaQuery: min-height / max-height / height" {
 }
 
 test "MediaQuery: device-width / device-height" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(min-device-width: 1px)", v));
     try testing.expect(matches("(min-device-width: 1512px)", v));
     try testing.expect(!matches("(min-device-width: 1513px)", v));
@@ -496,7 +496,7 @@ test "MediaQuery: device-width / device-height" {
 }
 
 test "MediaQuery: orientation" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(orientation: landscape)", v));
     try testing.expect(!matches("(orientation: portrait)", v));
 
@@ -510,7 +510,7 @@ test "MediaQuery: orientation" {
 }
 
 test "MediaQuery: combined with `and`" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("screen and (min-width: 600px)", v));
     try testing.expect(!matches("print and (min-width: 600px)", v));
     try testing.expect(matches("(min-width: 600px) and (max-width: 2000px)", v));
@@ -519,7 +519,7 @@ test "MediaQuery: combined with `and`" {
 }
 
 test "MediaQuery: `not` negates" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("not print", v));
     try testing.expect(!matches("not screen", v));
     try testing.expect(!matches("not (min-width: 600px)", v));
@@ -527,7 +527,7 @@ test "MediaQuery: `not` negates" {
 }
 
 test "MediaQuery: comma is OR" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("print, screen", v));
     try testing.expect(matches("(max-width: 100px), (min-width: 600px)", v));
     try testing.expect(!matches("(max-width: 100px), (min-width: 3000px)", v));
@@ -535,33 +535,33 @@ test "MediaQuery: comma is OR" {
 }
 
 test "MediaQuery: `only` is no-op" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("only screen", v));
     try testing.expect(matches("only screen and (min-width: 600px)", v));
     try testing.expect(!matches("only print", v));
 }
 
 test "MediaQuery: em units (1em=16px)" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(min-width: 30em)", v)); // 480px <= 1512px
     try testing.expect(matches("(min-width: 94em)", v)); // 1504px <= 1512px
     try testing.expect(!matches("(min-width: 95em)", v)); // 1520px > 1512px
 }
 
 test "MediaQuery: rem treated as em" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(min-width: 30rem)", v));
     try testing.expect(!matches("(min-width: 121rem)", v));
 }
 
 test "MediaQuery: bare 0 is valid" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(min-width: 0)", v));
     try testing.expect(!matches("(max-width: 0)", v));
 }
 
 test "MediaQuery: unknown feature is false" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(!matches("(monochrome)", v));
     try testing.expect(!matches("(prefers-color-scheme: dark)", v));
     try testing.expect(!matches("(prefers-reduced-motion: reduce)", v));
@@ -570,7 +570,7 @@ test "MediaQuery: unknown feature is false" {
 }
 
 test "MediaQuery: malformed value is false" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(!matches("(min-width: foo)", v));
     try testing.expect(!matches("(min-width:)", v));
     try testing.expect(!matches("(min-width: -100px)", v));
@@ -578,7 +578,7 @@ test "MediaQuery: malformed value is false" {
 }
 
 test "MediaQuery: boolean form (feature presence)" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(width)", v));
     try testing.expect(matches("(height)", v));
     try testing.expect(matches("(orientation)", v));
@@ -587,7 +587,7 @@ test "MediaQuery: boolean form (feature presence)" {
 }
 
 test "MediaQuery: viewport-default values" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expectEqual(@as(u32, 1512), v.width);
     try testing.expectEqual(@as(u32, 774), v.height);
     // The screen is the full display; the viewport above is what is left of
@@ -597,13 +597,13 @@ test "MediaQuery: viewport-default values" {
 }
 
 test "MediaQuery: leading whitespace and case" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("  (MIN-WIDTH: 600PX)  ", v));
     try testing.expect(matches("SCREEN AND (Min-Width: 600px)", v));
 }
 
 test "MediaQuery: malformed query is false" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(!matches("(", v));
     try testing.expect(!matches("(min-width: 600px", v));
     try testing.expect(!matches("@@@", v));
@@ -611,19 +611,19 @@ test "MediaQuery: malformed query is false" {
 
 test "MediaQuery: not print is true on screen viewport" {
     // Common pattern: `<style media="not print">`
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("not print", v));
 }
 
 test "MediaQuery: common responsive breakpoint" {
     // Pattern: hide one of mobile/desktop CTA duplicates above a breakpoint.
-    const v = Viewport.default; // 1512×982 — desktop side.
+    const v = Viewport.default(); // 1512×982 — desktop side.
     try testing.expect(matches("(min-width: 768px)", v));
     try testing.expect(!matches("(max-width: 767px)", v));
 }
 
 test "MediaQuery: comments are stripped" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     // Comment between tokens.
     try testing.expect(matches("screen and /*hidden*/ (min-width: 1px)", v));
     // Comment at the start.
@@ -637,7 +637,7 @@ test "MediaQuery: comments are stripped" {
 }
 
 test "MediaQuery: em / rem overflow fails closed" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     // 268435456 × 16 overflows u32 (would wrap to 0); the evaluator must
     // treat the length as unparseable and the query as non-matching.
     try testing.expect(!matches("(min-width: 268435456em)", v));
@@ -648,7 +648,7 @@ test "MediaQuery: em / rem overflow fails closed" {
 }
 
 test "MediaQuery: unimplemented units fail closed" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(!matches("(min-width: 5cm)", v));
     try testing.expect(!matches("(min-width: 50mm)", v));
     try testing.expect(!matches("(min-width: 10pt)", v));
@@ -657,7 +657,7 @@ test "MediaQuery: unimplemented units fail closed" {
 }
 
 test "MediaQuery: range syntax is unsupported (fails closed)" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     // MQ4 range form is not implemented — should evaluate false rather than
     // accidentally matching via the `width` boolean form.
     try testing.expect(!matches("(width >= 600px)", v));
@@ -667,21 +667,21 @@ test "MediaQuery: range syntax is unsupported (fails closed)" {
 }
 
 test "MediaQuery: decimal lengths are rejected" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(!matches("(min-width: 600.5px)", v));
     try testing.expect(!matches("(min-width: 0.5em)", v));
     try testing.expect(!matches("(width: 1512.0px)", v));
 }
 
 test "MediaQuery: whitespace-tight and -loose features" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches("(min-width:600px)", v));
     try testing.expect(matches("( min-width : 600px )", v));
     try testing.expect(matches("(  min-width  :  600px  )", v));
 }
 
 test "MediaQuery: additional comment placements" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     // Two adjacent comments between tokens.
     try testing.expect(matches("screen /*a*/ /*b*/ and (min-width: 1px)", v));
     // Comments on both sides of the feature content.
@@ -694,7 +694,7 @@ test "MediaQuery: additional comment placements" {
 }
 
 test "MediaQuery: u32 boundaries on length" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     // u32 max parses; the viewport (1512) doesn't reach it.
     try testing.expect(!matches("(min-width: 4294967295px)", v));
     // Beyond u32 max overflows parseInt and fails closed.
@@ -703,14 +703,14 @@ test "MediaQuery: u32 boundaries on length" {
 }
 
 test "MediaQuery: empty parens" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(!matches("()", v));
     try testing.expect(!matches("(   )", v));
     try testing.expect(!matches("screen and ()", v));
 }
 
 test "MediaQuery: long AND chains" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     try testing.expect(matches(
         "screen and (min-width: 600px) and (max-width: 2000px) and (orientation: landscape)",
         v,
@@ -722,11 +722,11 @@ test "MediaQuery: long AND chains" {
 }
 
 test "MediaQuery: not all is always false" {
-    try testing.expect(!matches("not all", Viewport.default));
+    try testing.expect(!matches("not all", Viewport.default()));
 }
 
 test "MediaQuery: not applies to the whole query" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     // For 1512×982: (min-width:3000px)=false, (orientation:landscape)=true.
     // Combined feature match is false; `not` flips it to true.
     try testing.expect(matches("not (min-width: 3000px) and (orientation: landscape)", v));
@@ -735,7 +735,7 @@ test "MediaQuery: not applies to the whole query" {
 }
 
 test "MediaQuery: multibyte UTF-8 tokens fail closed" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     // Unsupported feature name with a multi-byte character.
     try testing.expect(!matches("(café-width: 600px)", v));
     // Multi-byte identifier in media-type position.
@@ -743,7 +743,7 @@ test "MediaQuery: multibyte UTF-8 tokens fail closed" {
 }
 
 test "MediaQuery: trailing unterminated comment fails closed" {
-    const v = Viewport.default;
+    const v = Viewport.default();
     // A valid prefix followed by an unbalanced `/* ...` must still evaluate
     // to false. Without an explicit guard, the inline comment-skipper would
     // silently consume the rest of the input and return whatever the prefix

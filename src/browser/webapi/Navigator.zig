@@ -31,6 +31,7 @@ const UserActivation = @import("UserActivation.zig");
 const BatteryManager = @import("BatteryManager.zig");
 const ModelContext = @import("ModelContext.zig");
 const StorageManager = @import("StorageManager.zig");
+const Keyboard = @import("Keyboard.zig");
 const NavigatorUAData = @import("NavigatorUAData.zig");
 const Geolocation = @import("geolocation/Geolocation.zig");
 
@@ -42,7 +43,7 @@ comptime {
     // Ensure we don't cause an identity map conflict. Because _geolocation is
     // lazy and, for now, Zig orders the highest-aligned field first, none of
     // the other fields land at offset 0.
-    for ([_][]const u8{ "_permissions", "_storage", "_ua_data", "_user_activation" }) |name| {
+    for ([_][]const u8{ "_permissions", "_storage", "_ua_data", "_user_activation", "_keyboard" }) |name| {
         if (@offsetOf(Navigator, name) == 0) @compileError(name ++ " aliases the Navigator");
     }
 }
@@ -53,6 +54,7 @@ _geolocation: ?*Geolocation = null,
 _storage: StorageManager = .{},
 _ua_data: NavigatorUAData = .{},
 _user_activation: UserActivation = .{},
+_keyboard: Keyboard = .{},
 _connection: ?*NetworkInformation = null,
 
 pub const init: Navigator = .{};
@@ -100,11 +102,11 @@ fn getCookieEnabled(_: *const Navigator) bool {
 }
 
 pub fn getHardwareConcurrency(_: *const Navigator) u32 {
-    return fingerprint.hardware_concurrency;
+    return fingerprint.hardwareConcurrency();
 }
 
 pub fn getDeviceMemory(_: *const Navigator) f64 {
-    return fingerprint.device_memory;
+    return fingerprint.deviceMemory();
 }
 
 fn getMaxTouchPoints(_: *const Navigator) u32 {
@@ -144,7 +146,7 @@ fn getWebdriver(_: *const Navigator) bool {
 /// Fixed, not read from `builtin.os.tag`: the whole point of the profile is
 /// that a Linux and a macOS build are indistinguishable from a page.
 pub fn getPlatform(_: *const Navigator) []const u8 {
-    return fingerprint.platform;
+    return fingerprint.platform();
 }
 
 /// Returns whether Java is enabled (always false)
@@ -218,6 +220,13 @@ fn getStorage(self: *Navigator) *StorageManager {
 
 fn getUserAgentData(self: *Navigator) *NavigatorUAData {
     return &self._ua_data;
+}
+
+/// Desktop Chrome only, which is the point: a page that reads the layout map
+/// learns which physical keyboard is attached, and the profile's region
+/// decides that (see fingerprint/keyboard.zig).
+fn getKeyboard(self: *Navigator) *Keyboard {
+    return &self._keyboard;
 }
 
 pub fn getModelContext(_: *const Navigator, frame: *Frame) *ModelContext {
@@ -326,6 +335,7 @@ pub const JsApi = struct {
     pub const permissions = bridge.accessor(Navigator.getPermissions, null, .{});
     pub const storage = bridge.accessor(Navigator.getStorage, null, .{});
     pub const userAgentData = bridge.accessor(Navigator.getUserAgentData, null, .{});
+    pub const keyboard = bridge.accessor(Navigator.getKeyboard, null, .{});
     pub const plugins = bridge.accessor(Navigator.getPlugins, null, .{});
     pub const mimeTypes = bridge.accessor(Navigator.getMimeTypes, null, .{});
     pub const connection = bridge.accessor(Navigator.getConnection, null, .{});

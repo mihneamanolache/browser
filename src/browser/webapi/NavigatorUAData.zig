@@ -41,7 +41,7 @@ fn getMobile(_: *const NavigatorUAData) bool {
 }
 
 fn getPlatform(_: *const NavigatorUAData) []const u8 {
-    return fingerprint.ua_platform;
+    return fingerprint.uaPlatform();
 }
 
 pub fn toJSON(_: *const NavigatorUAData) struct {
@@ -52,7 +52,7 @@ pub fn toJSON(_: *const NavigatorUAData) struct {
     return .{
         .mobile = fingerprint.mobile,
         .brands = brandList(.version),
-        .platform = fingerprint.ua_platform,
+        .platform = fingerprint.uaPlatform(),
     };
 }
 
@@ -65,11 +65,11 @@ fn getHighEntropyValues(_: *const NavigatorUAData, hints: []const []const u8, ex
     return exec.js.local.?.resolvePromise(.{
         .brands = brandList(.version),
         .mobile = fingerprint.mobile,
-        .platform = fingerprint.ua_platform,
-        .architecture = fingerprint.architecture,
-        .bitness = fingerprint.bitness,
+        .platform = fingerprint.uaPlatform(),
+        .architecture = fingerprint.architecture(),
+        .bitness = fingerprint.bitness(),
         .model = fingerprint.model,
-        .platformVersion = fingerprint.platform_version,
+        .platformVersion = fingerprint.platformVersion(),
         .uaFullVersion = fingerprint.chrome_full_version,
         .fullVersionList = brandList(.full_version),
         .wow64 = fingerprint.wow64,

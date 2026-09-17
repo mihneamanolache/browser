@@ -867,24 +867,27 @@ pub fn buildJSONVersionResponse(app: *const App, port: u16) ![]const u8 {
     // connects to "Lightpanda/1.0" and then sees a Chrome UA in-page has
     // found a contradiction for free. Both fields carry the profile's
     // identity; the real build stays available under its own key.
+    // The UA is not a comptime constant any more (it follows the selected
+    // machine), so it is an argument rather than part of the literal.
     const body_format =
         "{{" ++
         "\"Browser\": \"" ++ lp.fingerprint.cdp_browser ++ "\", " ++
-        "\"Protocol-Version\": \"1.3\", " ++
-        "\"User-Agent\": \"" ++ lp.fingerprint.user_agent ++ "\", " ++
+        "\"Protocol-Version\": \"" ++ lp.fingerprint.cdp_protocol_version ++ "\", " ++
+        "\"User-Agent\": \"{s}\", " ++
         "\"V8-Version\": \"" ++ lp.fingerprint.chrome_full_version ++ "\", " ++
         "\"WebKit-Version\": \"537.36\", " ++
         "\"Lightpanda-Version\": \"" ++ lp.build_config.version ++ "\", " ++
         "\"webSocketDebuggerUrl\": \"ws://{s}:{d}/\"" ++
         "}}";
-    const body_len = std.fmt.count(body_format, .{ host, port });
+    const user_agent = lp.fingerprint.userAgent();
+    const body_len = std.fmt.count(body_format, .{ user_agent, host, port });
 
     const response_format =
         "HTTP/1.1 200 OK\r\n" ++
         "Content-Length: {d}\r\n" ++
         "Content-Type: application/json; charset=UTF-8\r\n\r\n" ++
         body_format;
-    return try std.fmt.allocPrint(app.allocator, response_format, .{ body_len, host, port });
+    return try std.fmt.allocPrint(app.allocator, response_format, .{ body_len, user_agent, host, port });
 }
 
 // Where the upgraded socket goes: a new worker, or an existing session's.

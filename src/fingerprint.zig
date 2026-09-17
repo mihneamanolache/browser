@@ -19,18 +19,100 @@
 //! The one profile every observable identity surface reports, on every host.
 //!
 //! Nothing here consults `builtin.os.tag` or `builtin.cpu.arch`: a build
-//! running on Linux, macOS or Windows presents the same Chrome-on-Windows
-//! identity, so a page cannot tell the three apart. Every value a page can
-//! read — the UA string, client hints, `navigator`, `screen`, the window
-//! metrics, the WebGL strings, the plugin list — is derived from the
-//! constants below, so the JS side and the HTTP side cannot drift.
+//! running on Linux, macOS or Windows presents whichever desktop-Chrome
+//! identity was selected, so a page cannot tell the three apart. Every value
+//! a page can read — the UA string, client hints, `navigator`, `screen`, the
+//! window metrics, the WebGL strings, the plugin list — comes from here, so
+//! the JS side and the HTTP side cannot drift.
 //!
-//! Anything derived (`app_version` from `user_agent`, the `Sec-Ch-Ua`
-//! headers from `brands`) is computed here rather than restated, so a single
-//! edit moves the whole profile. Changing the Chrome version means editing
-//! `chrome_major` and `chrome_full_version`, and nothing else.
+//! TWO KINDS OF VALUE
+//!
+//! Constants are the ones that are the same on every desktop Chrome: the
+//! version, the brand list, the frozen plugin array, `productSub`. Editing
+//! `chrome_major` and `chrome_full_version` moves the whole profile to a new
+//! Chrome release and nothing else has to change.
+//!
+//! Functions are the ones that vary by *which machine* and *which region*
+//! this process claims to be — see `fingerprint/machines.zig` for why those
+//! are drawn as whole coherent units rather than field by field. They read
+//! the selection made once at startup by `select`, `selectNamed` or
+//! `selectRegionForCountry`, and never change afterwards.
 
 const std = @import("std");
+
+pub const machines = @import("fingerprint/machines.zig");
+pub const startup = @import("fingerprint/startup.zig");
+pub const geo = @import("fingerprint/geo.zig");
+pub const keyboard_layouts = @import("fingerprint/keyboard.zig");
+pub const Machine = machines.Machine;
+pub const Region = machines.Region;
+
+/// The identity this process presents. Selected once at startup from a seed
+/// (see `select`) and never changed afterwards: an identity that shifts
+/// mid-session contradicts itself, and a cookie jar earned under one identity
+/// has to be replayed under the same one.
+///
+/// Indices rather than pointers, because the strings each machine implies --
+/// the UA, appVersion, Sec-CH-UA-Platform -- are built at comptime into
+/// `derived` below and looked up by the same index. That keeps every accessor
+/// a plain lookup returning a sentinel-terminated slice, with no runtime
+/// buffer for a caller to own.
+var active_machine_index: usize = 0;
+var active_region_index: usize = 0;
+
+pub fn machine() *const Machine {
+    return &machines.machines[active_machine_index];
+}
+
+pub fn region() *const Region {
+    return &machines.regions[active_region_index];
+}
+
+/// Chooses the identity for this process. Call once, before anything reads a
+/// profile value -- in practice from `main`, before Config's HTTP headers and
+/// the V8 platform are built from it.
+pub fn select(seed: u64) void {
+    const p = machines.pick(seed);
+    active_machine_index = indexOfMachine(p.machine);
+    active_region_index = indexOfRegion(p.region);
+}
+
+/// Pins a specific machine and/or region by name, for reproducing a report or
+/// matching a jar that was earned elsewhere. Returns false if a name is
+/// unknown, so a typo fails loudly rather than silently picking a default.
+pub fn selectNamed(machine_name: ?[]const u8, region_name: ?[]const u8) bool {
+    const m = if (machine_name) |n| machines.machineByName(n) orelse return false else null;
+    const r = if (region_name) |n| machines.regionByName(n) orelse return false else null;
+    // Resolved both before assigning either, so a bad region name does not
+    // leave a half-applied identity behind.
+    if (m) |x| active_machine_index = indexOfMachine(x);
+    if (r) |x| active_region_index = indexOfRegion(x);
+    return true;
+}
+
+/// Moves the region to wherever the exit IP is, leaving the hardware alone.
+/// Used by `--fingerprint-region auto`, which resolves the proxy's country at
+/// startup: the machine a crawler claims to be is independent of where it is,
+/// but the time zone and language are not.
+pub fn selectRegionForCountry(country: []const u8, seed: u64) ?*const Region {
+    const r = machines.regionForCountry(country, seed) orelse return null;
+    active_region_index = indexOfRegion(r);
+    return r;
+}
+
+fn indexOfMachine(m: *const Machine) usize {
+    for (&machines.machines, 0..) |*candidate, i| {
+        if (candidate == m) return i;
+    }
+    unreachable;
+}
+
+fn indexOfRegion(r: *const Region) usize {
+    for (&machines.regions, 0..) |*candidate, i| {
+        if (candidate == r) return i;
+    }
+    unreachable;
+}
 
 /// Marketing version. Drives the UA string and the `brands` list.
 pub const chrome_major = "151";
@@ -39,26 +121,58 @@ pub const chrome_major = "151";
 /// has reported a frozen `X.0.0.0` since Chrome 101.
 pub const chrome_full_version = "151.0.7922.138";
 
-/// Chrome on macOS. The "Intel Mac OS X 10_15_7" is frozen: Chrome has
-/// reported that exact string on every Mac since 10.15, Apple Silicon
-/// included, so an honest "14_8_1" or "arm64" here would be the anomaly.
-pub const user_agent: [:0]const u8 =
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) " ++
-    "Chrome/" ++ chrome_major ++ ".0.0.0 Safari/537.36";
+/// The strings a machine implies, built once at comptime for every entry in
+/// the table so the accessors below are lookups rather than formatting.
+const Derived = struct {
+    user_agent: [:0]const u8,
+    /// The UA minus its "Mozilla/" prefix, which is all `navigator.appVersion`
+    /// is. Derived rather than restated so the two cannot disagree.
+    app_version: [:0]const u8,
+    /// Sec-CH-UA-Platform, quoted as a structured-field string.
+    sec_ch_ua_platform: [:0]const u8,
+};
 
-/// `navigator.appVersion` is the UA string with the leading "Mozilla/"
-/// removed. Slicing keeps the two in step by construction.
-pub const app_version: []const u8 = user_agent["Mozilla/".len..];
+const derived: [machines.machines.len]Derived = blk: {
+    var out: [machines.machines.len]Derived = undefined;
+    for (machines.machines, 0..) |m, i| {
+        // "Intel Mac OS X 10_15_7" and "Windows NT 10.0" are frozen by
+        // Chrome: every Mac says 10_15_7 including Apple Silicon, and every
+        // 64-bit Windows says the same block including Windows 11. The rest
+        // of the string is identical across every desktop Chrome, so only
+        // the block varies.
+        const app_version = "5.0 (" ++ m.ua_platform_block ++
+            ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" ++ chrome_major ++ ".0.0.0 Safari/537.36";
+        out[i] = .{
+            .user_agent = mozilla_prefix ++ app_version,
+            .app_version = app_version,
+            .sec_ch_ua_platform = "\"" ++ m.ua_platform ++ "\"",
+        };
+    }
+    break :blk out;
+};
 
-pub const platform = "MacIntel";
+pub fn userAgent() [:0]const u8 {
+    return derived[active_machine_index].user_agent;
+}
+
+pub fn appVersion() [:0]const u8 {
+    return derived[active_machine_index].app_version;
+}
+
+/// Longest UA any entry in the table produces, with headroom. Callers that
+/// copy it into a fixed buffer size it from here.
+pub const user_agent_max_len = 160;
+
+pub const mozilla_prefix = "Mozilla/";
 pub const vendor = "Google Inc.";
 pub const product = "Gecko";
 pub const app_name = "Netscape";
 pub const app_code_name = "Mozilla";
 
-/// BCP 47 tag. Also the default `--locale`, which produces the
-/// Accept-Language header and `navigator.languages`.
-pub const locale: [:0]const u8 = "en-GB";
+/// The active region's tag. Also the default `--locale`.
+pub fn locale() [:0]const u8 {
+    return region().locale;
+}
 
 /// The Accept-Language header, captured from the reference Chrome rather
 /// than derived. Chrome builds this from the OS's preferred-languages list,
@@ -66,15 +180,23 @@ pub const locale: [:0]const u8 = "en-GB";
 /// for this machine. `navigator.languages` is read straight off it, so the
 /// two cannot drift. A `--locale` override falls back to the generic
 /// derivation in Config.HttpHeaders.
-pub const accept_language: [:0]const u8 = "en-GB,en-US;q=0.9,en;q=0.8";
+pub fn acceptLanguage() [:0]const u8 {
+    return region().accept_language;
+}
 
 /// IANA id. Also the default `--timezone`, which becomes ICU's default zone,
 /// so `Intl.DateTimeFormat().resolvedOptions().timeZone` and
 /// `Date#getTimezoneOffset` agree with it.
-pub const timezone: [:0]const u8 = "Europe/Bucharest";
+pub fn timezone() [:0]const u8 {
+    return region().timezone;
+}
 
-pub const hardware_concurrency: u32 = 10;
-pub const device_memory: f64 = 16.0;
+pub fn hardwareConcurrency() u32 {
+    return machine().hardware_concurrency;
+}
+pub fn deviceMemory() f64 {
+    return machine().device_memory;
+}
 pub const max_touch_points: u32 = 0;
 
 /// Chrome ships a built-in PDF viewer and has reported this as true since
@@ -114,16 +236,30 @@ pub const brands = [_]Brand{
     .{ .brand = "Chromium", .version = chrome_major, .full_version = chrome_full_version },
 };
 
+/// `navigator.platform`: "MacIntel" or "Win32". Frozen per OS by Chrome, and
+/// read by every fingerprinter as a cross-check on the UA string.
+pub fn platform() []const u8 {
+    return machine().platform;
+}
+
 /// `navigator.userAgentData.platform`, and the `Sec-Ch-Ua-Platform` header.
-pub const ua_platform: [:0]const u8 = "macOS";
+pub fn uaPlatform() [:0]const u8 {
+    return machine().ua_platform;
+}
 
 /// High-entropy `platformVersion`. The UA string is frozen at 10_15_7, so
 /// this hint is the only place the real macOS version appears.
-pub const platform_version: [:0]const u8 = "14.8.1";
+pub fn platformVersion() [:0]const u8 {
+    return machine().platform_version;
+}
 
 /// Apple Silicon. The UA still says "Intel" because Chrome freezes it there.
-pub const architecture: [:0]const u8 = "arm";
-pub const bitness: [:0]const u8 = "64";
+pub fn architecture() [:0]const u8 {
+    return machine().architecture;
+}
+pub fn bitness() [:0]const u8 {
+    return machine().bitness;
+}
 pub const model: [:0]const u8 = "";
 pub const wow64 = false;
 pub const mobile = false;
@@ -136,7 +272,12 @@ pub const sec_ch_ua: [:0]const u8 = brandListHeader("version");
 pub const sec_ch_ua_full_version_list: [:0]const u8 = brandListHeader("full_version");
 
 pub const sec_ch_ua_mobile: [:0]const u8 = if (mobile) "?1" else "?0";
-pub const sec_ch_ua_platform: [:0]const u8 = "\"" ++ ua_platform ++ "\"";
+
+/// `Sec-CH-UA-Platform`. Follows the machine, so it is a lookup rather than a
+/// constant, and it is always the quoted form of `uaPlatform()`.
+pub fn secChUaPlatform() [:0]const u8 {
+    return derived[active_machine_index].sec_ch_ua_platform;
+}
 
 fn brandListHeader(comptime field: []const u8) [:0]const u8 {
     comptime {
@@ -153,19 +294,29 @@ fn brandListHeader(comptime field: []const u8) [:0]const u8 {
 
 /// `screen.width` / `screen.height`. Also the default viewport's screen
 /// dimensions, so `Emulation.setDeviceMetricsOverride` can still move them.
-pub const screen_width: u32 = 1512;
-pub const screen_height: u32 = 982;
+pub fn screenWidth() u32 {
+    return machine().screen_width;
+}
+
+pub fn screenHeight() u32 {
+    return machine().screen_height;
+}
 
 /// Vertical space macOS reserves: the menu bar at the top plus the Dock at
 /// the bottom. `availHeight` is `height` minus this. Kept as a delta so an
 /// emulated screen size still yields a consistent avail size.
-pub const taskbar_height: u32 = 121;
+pub fn reservedHeight() u32 {
+    return machine().reserved_height;
+}
 
 /// `screen.availLeft` / `screen.availTop`. The menu bar pushes the usable
 /// area down by 38px; nothing reserves space on the left. Read 11 times each
 /// by CreepJS, BrowserLeaks and FingerprintJS.
 pub const avail_left: i32 = 0;
-pub const avail_top: i32 = 38;
+
+pub fn availTop() i32 {
+    return machine().avail_top;
+}
 
 /// `screen.isExtended` — whether a second display is attached. A single
 /// built-in panel is the common case and the lower-entropy answer.
@@ -177,12 +328,28 @@ pub const is_extended = false;
 pub const browser_chrome_height: u32 = 87;
 
 /// 30, not 24 or 32: a wide-gamut Apple display reports 10 bits per channel.
-pub const color_depth: u32 = 30;
-pub const pixel_depth: u32 = 30;
+pub fn colorDepth() u32 {
+    return machine().color_depth;
+}
+
+/// `screen.pixelDepth`. Chrome has reported the same number for both this and
+/// `colorDepth` on every desktop platform, so it is derived rather than a
+/// second field that could drift.
+pub fn pixelDepth() u32 {
+    return colorDepth();
+}
 
 /// Retina. Drives `(resolution: 2dppx)`, which CreepJS matchMedia-probes
 /// alongside the exact device-width/height.
-pub const device_pixel_ratio: f64 = 2.0;
+pub fn devicePixelRatio() f64 {
+    return machine().device_pixel_ratio;
+}
+
+/// The physical keyboard layout `navigator.keyboard.getLayoutMap()` reports.
+/// Follows the region, not the machine: the layout travels with the person.
+pub fn keyboard() machines.Keyboard {
+    return region().keyboard;
+}
 
 /// The macOS Dock sits at the bottom by default, so nothing is taken off
 /// the width.
@@ -191,7 +358,7 @@ pub fn availWidth(width: u32) u32 {
 }
 
 pub fn availHeight(height: u32) u32 {
-    return height -| taskbar_height;
+    return height -| reservedHeight();
 }
 
 /// A maximized window fills the available screen area.
@@ -253,9 +420,13 @@ pub const webgl = struct {
     /// reachable through the WEBGL_debug_renderer_info extension below.
     pub const vendor = "WebKit";
     pub const renderer = "WebKit WebGL";
-    pub const unmasked_vendor = "Google Inc. (Apple)";
-    pub const unmasked_renderer =
-        "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)";
+    pub fn unmaskedVendor() []const u8 {
+        return machine().gpu_vendor;
+    }
+
+    pub fn unmaskedRenderer() []const u8 {
+        return machine().gpu_renderer;
+    }
     pub const version = "WebGL 1.0 (OpenGL ES 2.0 Chromium)";
 
     /// getParameter limits, measured on the reference machine. ANGLE-on-Metal
@@ -263,13 +434,36 @@ pub const webgl = struct {
     /// 511px max point size where D3D11 gives 1024 — both are read by
     /// CreepJS, so they have to match the renderer string above.
     pub const max_texture_size: i64 = 16384;
-    pub const max_viewport_dims = [2]i32{ 16384, 16384 };
     pub const max_renderbuffer_size: i64 = 16384;
     pub const max_vertex_attribs: i64 = 16;
     pub const max_varying_vectors: i64 = 30;
     pub const max_combined_texture_image_units: i64 = 32;
     pub const aliased_line_width_range = [2]f32{ 1, 1 };
-    pub const aliased_point_size_range = [2]f32{ 1, 511 };
+
+    /// getParameter hands these back as typed arrays whose backing storage
+    /// has to outlive the call, so they are comptime per-machine tables and
+    /// these return a pointer into the active entry rather than a temporary.
+    const Limits = struct {
+        max_viewport_dims: [2]i32,
+        aliased_point_size_range: [2]f32,
+    };
+
+    const limits: [machines.machines.len]Limits = blk: {
+        var out: [machines.machines.len]Limits = undefined;
+        for (machines.machines, 0..) |m, i| out[i] = .{
+            .max_viewport_dims = .{ m.max_viewport, m.max_viewport },
+            .aliased_point_size_range = .{ 1, m.max_point_size },
+        };
+        break :blk out;
+    };
+
+    pub fn maxViewportDims() *const [2]i32 {
+        return &limits[active_machine_index].max_viewport_dims;
+    }
+
+    pub fn aliasedPointSizeRange() *const [2]f32 {
+        return &limits[active_machine_index].aliased_point_size_range;
+    }
     pub const depth_bits: i64 = 24;
     pub const stencil_bits: i64 = 0;
     pub const shading_language_version = "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)";
@@ -315,17 +509,64 @@ pub const mime_types = [_]MimeType{
 /// UA string rather than the Lightpanda build id.
 pub const cdp_browser: []const u8 = "Chrome/" ++ chrome_full_version;
 
+/// `GET /json/version`'s `Protocol-Version`, alongside the two above.
+pub const cdp_protocol_version: []const u8 = "1.3";
+
 const testing = std.testing;
 
-test "fingerprint: appVersion is the UA minus its Mozilla prefix" {
+test {
+    // Pulls in the tests of the submodules this file re-exports; the
+    // refAllDecls in lightpanda.zig only reaches one level.
+    testing.refAllDecls(@This());
+}
+
+/// The active identity, saved and put back. A test that selects a machine to
+/// assert against must not leak that choice into the rest of the suite, which
+/// runs against the profile test_runner pins at startup.
+const Pinned = struct {
+    machine_index: usize,
+    region_index: usize,
+
+    fn save() Pinned {
+        return .{ .machine_index = active_machine_index, .region_index = active_region_index };
+    }
+
+    fn restore(self: Pinned) void {
+        active_machine_index = self.machine_index;
+        active_region_index = self.region_index;
+    }
+};
+
+test "fingerprint: the UA is built from the active machine's platform block" {
+    const pinned = Pinned.save();
+    defer pinned.restore();
+
+    try testing.expect(selectNamed("macbook-pro-14-m2pro", null));
     try testing.expectEqualStrings(
-        "5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
-        app_version,
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        userAgent(),
     );
-    try testing.expectEqualStrings(user_agent, "Mozilla/" ++ app_version);
+
+    try testing.expect(selectNamed("windows-1080p-intel", null));
+    try testing.expectEqualStrings(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        userAgent(),
+    );
+
+    // Every machine's UA must fit the buffer callers size from this constant.
+    for (machines.machines, 0..) |_, i| {
+        active_machine_index = i;
+        try testing.expect(userAgent().len <= user_agent_max_len);
+        // appVersion is that string minus the prefix, and nothing else.
+        try testing.expect(std.mem.startsWith(u8, userAgent(), mozilla_prefix));
+        try testing.expectEqualStrings(appVersion(), userAgent()[mozilla_prefix.len..]);
+    }
 }
 
 test "fingerprint: client hint headers are built from the brand list" {
+    const pinned = Pinned.save();
+    defer pinned.restore();
+
     try testing.expectEqualStrings(
         "\"Not=A?Brand\";v=\"99\", \"Google Chrome\";v=\"151\", \"Chromium\";v=\"151\"",
         sec_ch_ua,
@@ -334,21 +575,63 @@ test "fingerprint: client hint headers are built from the brand list" {
         "\"Not=A?Brand\";v=\"99.0.0.0\", \"Google Chrome\";v=\"151.0.7922.138\", \"Chromium\";v=\"151.0.7922.138\"",
         sec_ch_ua_full_version_list,
     );
-    try testing.expectEqualStrings("\"macOS\"", sec_ch_ua_platform);
     try testing.expectEqualStrings("?0", sec_ch_ua_mobile);
+
+    // Sec-CH-UA-Platform follows the machine, and must agree with what
+    // navigator.userAgentData.platform reports.
+    try testing.expect(selectNamed("macbook-air-13-m2", null));
+    try testing.expectEqualStrings("\"macOS\"", secChUaPlatform());
+    try testing.expectEqualStrings("macOS", uaPlatform());
+
+    try testing.expect(selectNamed("windows-1440p-amd", null));
+    try testing.expectEqualStrings("\"Windows\"", secChUaPlatform());
+    try testing.expectEqualStrings("Windows", uaPlatform());
 }
 
-test "fingerprint: window geometry derives from the screen size" {
-    // Measured on the reference MacBook: 1512x982 panel, 861 usable after the
-    // menu bar and Dock, and 87px of browser chrome above the content.
-    try testing.expectEqual(1512, availWidth(screen_width));
-    try testing.expectEqual(861, availHeight(screen_height));
-    try testing.expectEqual(1512, outerWidth(screen_width));
-    try testing.expectEqual(861, outerHeight(screen_height));
-    try testing.expectEqual(774, outerHeight(screen_height) - browser_chrome_height);
+test "fingerprint: window geometry derives from the active screen" {
+    const pinned = Pinned.save();
+    defer pinned.restore();
+
+    // macOS: 1512x982 panel, 861 usable after the menu bar and Dock.
+    try testing.expect(selectNamed("macbook-pro-14-m2pro", null));
+    try testing.expectEqual(1512, availWidth(screenWidth()));
+    try testing.expectEqual(861, availHeight(screenHeight()));
+    try testing.expectEqual(1512, outerWidth(screenWidth()));
+    try testing.expectEqual(774, outerHeight(screenHeight()) - browser_chrome_height);
+
+    // Windows: same arithmetic, different reserved height (taskbar only).
+    try testing.expect(selectNamed("windows-1080p-intel", null));
+    try testing.expectEqual(1920, availWidth(screenWidth()));
+    try testing.expectEqual(1032, availHeight(screenHeight()));
+    try testing.expectEqual(945, outerHeight(screenHeight()) - browser_chrome_height);
+
+    // Whatever machine is active, the viewport must be a sane slice of it.
+    for (machines.machines, 0..) |_, i| {
+        active_machine_index = i;
+        const inner = outerHeight(screenHeight()) - browser_chrome_height;
+        try testing.expect(inner > 0);
+        try testing.expect(inner < screenHeight());
+        try testing.expect(availHeight(screenHeight()) < screenHeight());
+    }
 }
 
-test "fingerprint: a screen shorter than the taskbar saturates instead of wrapping" {
+test "fingerprint: a seed selects one identity and keeps it" {
+    const pinned = Pinned.save();
+    defer pinned.restore();
+
+    select(12345);
+    const m = machine();
+    const r = region();
+    select(12345);
+    try testing.expectEqual(m, machine());
+    try testing.expectEqual(r, region());
+
+    // An unknown name fails loudly rather than silently defaulting.
+    try testing.expect(!selectNamed("no-such-machine", null));
+    try testing.expect(!selectNamed(null, "no-such-region"));
+}
+
+test "fingerprint: a screen shorter than the reserved area saturates instead of wrapping" {
     try testing.expectEqual(0, availHeight(10));
 }
 

@@ -19,6 +19,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const fingerprint = @import("lightpanda").fingerprint;
+
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
@@ -32,6 +34,12 @@ pub var tracking_allocator: Allocator = undefined;
 var RUNNER: *Runner = undefined;
 
 pub fn main(init: std.process.Init) !void {
+    // The identity is normally drawn from a seed at startup, which would make
+    // every expectation about the UA, the screen size or Accept-Language a
+    // coin flip. Pin one here so the suite describes a fixed profile; tests
+    // that care about a different one select it themselves.
+    std.debug.assert(fingerprint.selectNamed("macbook-pro-14-m2pro", "uk"));
+
     var mem: [8192]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&mem);
 

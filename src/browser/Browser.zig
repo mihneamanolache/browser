@@ -210,7 +210,7 @@ pub fn setViewportOverride(self: *Browser, viewport: ?Viewport) void {
 }
 
 pub fn getViewport(self: *const Browser) Viewport {
-    return self.viewport_override orelse Viewport.default;
+    return self.viewport_override orelse Viewport.default();
 }
 
 pub fn newSession(self: *Browser, notification: *Notification) !*Session {

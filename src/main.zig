@@ -84,6 +84,13 @@ fn run(allocator: Allocator, main_arena: Allocator, proc_args: std.process.Args)
         else => {},
     }
 
+    if (args.fingerprintList()) {
+        var stdout = std.Io.File.stdout().writerStreaming(lp.io, &.{});
+        try lp.fingerprint.startup.list(&stdout.interface);
+        try stdout.interface.flush();
+        return std.process.cleanExit(lp.io);
+    }
+
     // must be installed before any other threads
     const sighandler = try main_arena.create(SigHandler);
     sighandler.* = .{ .arena = main_arena };

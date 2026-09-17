@@ -92,13 +92,35 @@ jobs:
 
       # Smoke test: a binary that cannot report its own identity is not worth
       # publishing, and this catches a broken snapshot or V8 link immediately.
+      #
+      # Over HTTP, not file://, which `fetch` does not support. The page is
+      # served locally so the test needs no network and cannot flake on one.
       - name: smoke test
         if: matrix.os == 'linux' || matrix.arch == 'aarch64'
         run: |
-          ./lightpanda-${{ matrix.arch }}-${{ matrix.os }} --version
-          echo '<html><body><pre id=o></pre><script>document.getElementById("o").textContent=navigator.userAgent</script></body></html>' > /tmp/ua.html
-          ./lightpanda-${{ matrix.arch }}-${{ matrix.os }} fetch "file:///tmp/ua.html" --dump html --log-level error | grep -q "Chrome/" \
-            && echo "identity OK" || (echo "identity missing from build" && exit 1)
+          BIN=./lightpanda-${{ matrix.arch }}-${{ matrix.os }}
+          $BIN --version
+          $BIN fetch --fingerprint-list | grep -q "macbook" || (echo "profile table missing" && exit 1)
+
+          mkdir -p /tmp/smoke
+          cat > /tmp/smoke/ua.html <<'HTML'
+          <html><body><pre id=o></pre><script>
+          document.getElementById("o").textContent =
+            navigator.userAgent + "|" + navigator.platform + "|" + screen.width;
+          </script></body></html>
+          HTML
+          python3 -m http.server 8731 --directory /tmp/smoke &
+          SERVER=$!
+          trap 'kill $SERVER' EXIT
+          for _ in $(seq 20); do curl -sf -o /dev/null http://127.0.0.1:8731/ua.html && break; sleep 0.5; done
+
+          # --fingerprint pins the profile so the assertion is about the build
+          # and not about which machine the seed happened to draw.
+          OUT=$($BIN fetch http://127.0.0.1:8731/ua.html --dump html \
+                  --fingerprint macbook-pro-14-m2pro --log-level error)
+          echo "$OUT" | grep -q "Chrome/" || (echo "identity missing from build" && exit 1)
+          echo "$OUT" | grep -q "MacIntel|1512" || (echo "profile not applied" && exit 1)
+          echo "identity OK"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

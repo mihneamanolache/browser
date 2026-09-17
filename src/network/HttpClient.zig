@@ -466,7 +466,7 @@ pub fn baselineHeaders(self: *const Client) [6]Transfer.RequestHeader {
         // Sec-Ch-Ua. Sending the brand list without them is a shape no real
         // Chrome produces.
         .{ .name = "Sec-Ch-Ua-Mobile", .value = hints.sec_ch_ua_mobile, .source = .fixed },
-        .{ .name = "Sec-Ch-Ua-Platform", .value = hints.sec_ch_ua_platform, .source = .fixed },
+        .{ .name = "Sec-Ch-Ua-Platform", .value = hints.secChUaPlatform(), .source = .fixed },
         // Omitting Accept-Language triggers bot-protection on some CDNs
         // (Akamai) when Accept-Encoding is present.
         .{ .name = "Accept-Language", .value = self.getAcceptLanguage() },

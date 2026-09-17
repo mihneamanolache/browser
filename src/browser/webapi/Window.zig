@@ -225,6 +225,17 @@ fn setInnerHeight(self: *Window, value: js.Value) void {
     self.replaceGlobalProperty(value, "innerHeight");
 }
 
+/// Retina (2) on an Apple panel, 1 or 1.25 on Windows depending on the OS
+/// scaling. [Replaceable], like innerWidth: assigning to it overwrites the
+/// attribute rather than throwing.
+fn getDevicePixelRatio(_: *const Window) f64 {
+    return fingerprint.devicePixelRatio();
+}
+
+fn setDevicePixelRatio(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "devicePixelRatio");
+}
+
 fn setScrollX(self: *Window, value: js.Value) void {
     self.replaceGlobalProperty(value, "scrollX");
 }
@@ -1276,7 +1287,7 @@ pub const JsApi = struct {
     // the attribute rather than throwing.
     pub const innerWidth = bridge.accessor(Window.getInnerWidth, Window.setInnerWidth, .{});
     pub const innerHeight = bridge.accessor(Window.getInnerHeight, Window.setInnerHeight, .{});
-    pub const devicePixelRatio = bridge.property(fingerprint.device_pixel_ratio, .{ .template = false, .readonly = false });
+    pub const devicePixelRatio = bridge.accessor(Window.getDevicePixelRatio, Window.setDevicePixelRatio, .{});
 
     // [Replaceable] like innerWidth/innerHeight, but read-only in practice:
     // nothing in-process resizes the window.

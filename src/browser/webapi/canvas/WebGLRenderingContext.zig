@@ -198,8 +198,8 @@ fn getParameter(self: *const WebGLRenderingContext, pname: u32) ?Parameter {
         GL.RENDERER => .{ .string = webgl.renderer },
         GL.VERSION => .{ .string = webgl.version },
         GL.SHADING_LANGUAGE_VERSION => .{ .string = webgl.shading_language_version },
-        GL.UNMASKED_VENDOR_WEBGL => .{ .string = webgl.unmasked_vendor },
-        GL.UNMASKED_RENDERER_WEBGL => .{ .string = webgl.unmasked_renderer },
+        GL.UNMASKED_VENDOR_WEBGL => .{ .string = webgl.unmaskedVendor() },
+        GL.UNMASKED_RENDERER_WEBGL => .{ .string = webgl.unmaskedRenderer() },
 
         // Limits. These are the values the claimed GPU reports; a
         // fingerprinter that reads them and cross-checks against the
@@ -215,9 +215,9 @@ fn getParameter(self: *const WebGLRenderingContext, pname: u32) ?Parameter {
         GL.MAX_VERTEX_TEXTURE_IMAGE_UNITS => int(16),
         GL.MAX_COMBINED_TEXTURE_IMAGE_UNITS => int(webgl.max_combined_texture_image_units),
         GL.MAX_TEXTURE_MAX_ANISOTROPY_EXT => int(16),
-        GL.MAX_VIEWPORT_DIMS => .{ .int32_array = .{ .values = &webgl.max_viewport_dims } },
+        GL.MAX_VIEWPORT_DIMS => .{ .int32_array = .{ .values = webgl.maxViewportDims() } },
         GL.ALIASED_LINE_WIDTH_RANGE => .{ .float32_array = .{ .values = &webgl.aliased_line_width_range } },
-        GL.ALIASED_POINT_SIZE_RANGE => .{ .float32_array = .{ .values = &webgl.aliased_point_size_range } },
+        GL.ALIASED_POINT_SIZE_RANGE => .{ .float32_array = .{ .values = webgl.aliasedPointSizeRange() } },
 
         // Drawing buffer format. The default context attributes ask for
         // alpha and depth but not stencil or antialiasing-by-samples.

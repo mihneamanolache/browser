@@ -82,13 +82,24 @@ fn getAvailLeft(_: *const Screen) i32 {
 }
 
 fn getAvailTop(_: *const Screen) i32 {
-    return fingerprint.avail_top;
+    return fingerprint.availTop();
 }
 
 /// Whether a second display is attached. Part of the Window Management API
 /// and readable without permission.
 fn getIsExtended(_: *const Screen) bool {
     return fingerprint.is_extended;
+}
+
+/// 30 on a wide-gamut Apple panel, 24 on typical Windows, and never the 32 a
+/// lot of spoofing code assumes. `pixelDepth` has reported the same number as
+/// `colorDepth` on every desktop Chrome.
+fn getColorDepth(_: *const Screen) u32 {
+    return fingerprint.colorDepth();
+}
+
+fn getPixelDepth(_: *const Screen) u32 {
+    return fingerprint.pixelDepth();
 }
 
 fn getOnChange(self: *const Screen) ?js.Function.Global {
@@ -122,8 +133,8 @@ pub const JsApi = struct {
     pub const availTop = bridge.accessor(Screen.getAvailTop, null, .{});
     pub const isExtended = bridge.accessor(Screen.getIsExtended, null, .{});
     pub const onchange = bridge.accessor(Screen.getOnChange, Screen.setOnChange, .{});
-    pub const colorDepth = bridge.property(fingerprint.color_depth, .{ .template = false });
-    pub const pixelDepth = bridge.property(fingerprint.pixel_depth, .{ .template = false });
+    pub const colorDepth = bridge.accessor(Screen.getColorDepth, null, .{});
+    pub const pixelDepth = bridge.accessor(Screen.getPixelDepth, null, .{});
     pub const orientation = bridge.accessor(Screen.getOrientation, null, .{});
 };
 

@@ -29,14 +29,21 @@ scale: f32 = 1.0, // for screenshot raster
 screen_width: ?u32 = null,
 screen_height: ?u32 = null,
 
-/// The profile's maximized 1920x1080 window: the screen is the full
-/// 1920x1080, while the layout viewport is what is left after the taskbar
-/// and the browser's own UI. Keeping the two distinct is what lets
-/// `screen.height` (1080) and `innerHeight` (945) differ the way they do in
-/// a real maximized Chrome, instead of being the same number.
-pub const default = Viewport{
-    .width = fingerprint.screen_width,
-    .height = fingerprint.outerHeight(fingerprint.screen_height) - fingerprint.browser_chrome_height,
-    .screen_width = fingerprint.screen_width,
-    .screen_height = fingerprint.screen_height,
-};
+/// The selected profile's maximized window: the screen is the full panel,
+/// while the layout viewport is what is left after the taskbar (or Dock) and
+/// the browser's own UI. Keeping the two distinct is what lets
+/// `screen.height` and `innerHeight` differ the way they do in a real
+/// maximized Chrome, instead of being the same number.
+///
+/// A function and not a constant because the profile is chosen at startup;
+/// every caller reads it after that, so the value is stable for the process.
+pub fn default() Viewport {
+    const w = fingerprint.screenWidth();
+    const h = fingerprint.screenHeight();
+    return .{
+        .width = w,
+        .height = fingerprint.outerHeight(h) - fingerprint.browser_chrome_height,
+        .screen_width = w,
+        .screen_height = h,
+    };
+}
