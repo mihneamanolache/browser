@@ -456,11 +456,17 @@ pub fn getLanguages(self: *const Client) []const []const u8 {
 }
 
 // Headers _all_ requests include.
-pub fn baselineHeaders(self: *const Client) [4]Transfer.RequestHeader {
+pub fn baselineHeaders(self: *const Client) [6]Transfer.RequestHeader {
+    const hints = lp.Config.HttpHeaders;
     return .{
         .{ .name = "User-Agent", .value = self.getUserAgent() },
-        .{ .name = "Sec-Ch-Ua", .value = lp.Config.HttpHeaders.sec_ch_ua, .source = .fixed },
-        .{ .name = "Sec-Ch-Ua-Full-Version-List", .value = lp.Config.HttpHeaders.sec_ch_ua_full_version_list, .source = .fixed },
+        .{ .name = "Sec-Ch-Ua", .value = hints.sec_ch_ua, .source = .fixed },
+        .{ .name = "Sec-Ch-Ua-Full-Version-List", .value = hints.sec_ch_ua_full_version_list, .source = .fixed },
+        // Chrome sends the two low-entropy hints unconditionally, alongside
+        // Sec-Ch-Ua. Sending the brand list without them is a shape no real
+        // Chrome produces.
+        .{ .name = "Sec-Ch-Ua-Mobile", .value = hints.sec_ch_ua_mobile, .source = .fixed },
+        .{ .name = "Sec-Ch-Ua-Platform", .value = hints.sec_ch_ua_platform, .source = .fixed },
         // Omitting Accept-Language triggers bot-protection on some CDNs
         // (Akamai) when Accept-Encoding is present.
         .{ .name = "Accept-Language", .value = self.getAcceptLanguage() },
@@ -3589,11 +3595,94 @@ pub const Transfer = struct {
         return true;
     }
 
+    /// The Fetch Metadata headers (https://w3c.github.io/webappsec-fetch-metadata/).
+    ///
+    /// Chrome sends these on every request, and sends them *together with*
+    /// the Sec-CH-UA client hints. Emitting the hints without them is a shape
+    /// no real Chrome produces, and servers that check notice: Google serves
+    /// a redirect interstitial to exactly that combination, which then leads
+    /// to the /sorry/ reCAPTCHA. Anything claiming to be Chrome has to send
+    /// both sets or neither.
+    fn seedFetchMetadata(self: *Transfer) !void {
+        const req = &self.req;
+
+        // Dest is the destination the Fetch spec assigns each request type.
+        // "empty" covers fetch()/XHR/EventSource, which have no destination.
+        const dest: []const u8 = switch (req.resource_type) {
+            .document => "document",
+            .script => "script",
+            .stylesheet => "style",
+            .image => "image",
+            .worker => "worker",
+            .xhr, .fetch, .eventsource => "empty",
+        };
+
+        // Mode mirrors the request mode the fetch was made with. A document
+        // load is always a navigation; a subresource is whatever CORS mode
+        // it was issued under.
+        const mode: []const u8 = if (req.resource_type == .document) "navigate" else switch (req.request_mode) {
+            .cors => "cors",
+            .same_origin => "same-origin",
+            .no_cors => "no-cors",
+            .navigate => "navigate",
+        };
+
+        // Site describes the *initiator's* relationship to the target.
+        //
+        // A navigation cannot use req.origin for this: Frame.navigate sets
+        // the frame's origin to the URL it is about to load, so req.origin is
+        // the target itself and every navigation would claim "same-origin".
+        // The initiator is carried separately, as cookie_origin, for exactly
+        // the same reason SameSite needs it. A subresource's origin *is* its
+        // initiator, so that path reads req.origin as normal.
+        //
+        // Host comparison rather than full origin: a scheme-only difference
+        // (http -> https on the same host) reports same-origin here where
+        // Chrome would say cross-site. That is the rare case, and erring
+        // toward same-origin never invents a cross-site request that a server
+        // would treat as suspicious.
+        const site: []const u8 = blk: {
+            const initiator_host: []const u8 = if (req.resource_type == .document)
+                switch (req.cookie_origin orelse .none) {
+                    .none => break :blk "none",
+                    .url => |initiator_url| URL.getHostname(initiator_url),
+                }
+            else
+                URL.getOriginHostname(req.origin orelse break :blk "none");
+
+            const target_host = URL.getHostname(req.url);
+            if (std.mem.eql(u8, target_host, initiator_host)) break :blk "same-origin";
+            if (Cookie.areHostsSameSite(target_host, initiator_host)) break :blk "same-site";
+            break :blk "cross-site";
+        };
+
+        try self.addHeader("Sec-Fetch-Site", site, .{ .source = .fixed });
+        try self.addHeader("Sec-Fetch-Mode", mode, .{ .source = .fixed });
+        try self.addHeader("Sec-Fetch-Dest", dest, .{ .source = .fixed });
+
+        if (req.resource_type == .document) {
+            // Chrome advertises its willingness to be upgraded to HTTPS on
+            // navigations only, never on subresources.
+            try self.addHeader("Upgrade-Insecure-Requests", "1", .{ .source = .fixed });
+
+            // Sent only for a navigation the user actually triggered, and
+            // omitted entirely otherwise rather than sent as ?0. We cannot
+            // observe activation, so this covers the case we can be sure of:
+            // a navigation with no initiating document, which is what typing
+            // a URL or driving the browser from the CLI or CDP produces.
+            if (std.mem.eql(u8, site, "none")) {
+                try self.addHeader("Sec-Fetch-User", "?1", .{ .source = .fixed });
+            }
+        }
+    }
+
     // The client's baseline headers, added to every request at creation.
     fn seedHeaders(self: *Transfer) !void {
         for (self.client.baselineHeaders()) |hdr| {
             try self.addHeader(hdr.name, hdr.value, .{ .source = hdr.source });
         }
+
+        try self.seedFetchMetadata();
 
         // --http-header extras; setHeader so a same-name header (e.g.
         // Accept-Language) overrides the baseline instead of duplicating.
