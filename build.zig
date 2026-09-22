@@ -572,6 +572,16 @@ fn linkCurl(b: *Build, mod: *Build.Module, deps: Deps, is_tsan: bool, section: b
         mod.linkFramework("ImageIO", .{});
         mod.linkFramework("SystemConfiguration", .{});
     }
+
+    if (deps.target.result.os.tag == .linux) {
+        // The Rust staticlib pulls in Fontique with its "system" feature,
+        // which on Linux resolves host fonts through fontconfig. Cargo emits
+        // `cargo:rustc-link-lib=fontconfig` for that, but nothing carries it
+        // across into a Zig link of the produced .a, so the snapshot creator
+        // fails with undefined FcInitLoadConfig / FcCharSetCreate / ... .
+        // macOS takes the CoreText path above and never needed this.
+        mod.linkSystemLibrary("fontconfig", .{});
+    }
 }
 
 fn cLibModule(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, is_tsan: bool) *Build.Module {

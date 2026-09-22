@@ -36,7 +36,13 @@ runs:
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install -y wget xz-utils ca-certificates clang make git
+        # libfontconfig1-dev + pkg-config: the Rust FFI pulls in Fontique,
+        # whose yeslogic-fontconfig-sys crate needs fontconfig headers to run
+        # its build script and its symbols (FcInitLoadConfig, FcCharSetCreate,
+        # ...) to link. macOS uses CoreText instead, which is why this only
+        # ever failed on Linux.
+        sudo apt-get install -y wget xz-utils ca-certificates clang make git \
+          pkg-config libfontconfig1-dev
 
     # Zig version used from the `minimum_zig_version` field in build.zig.zon
     - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
