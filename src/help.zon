@@ -476,10 +476,11 @@
     \\          Maximum time in ms the transfer is allowed to complete. 0 means never.
     \\          Defaults to 15000.
     \\  --http-version <VERSION>
-    \\          HTTP version to negotiate. "1.1" never offers HTTP/2. "auto"
-    \\          picks the best available option.
+    \\          HTTP version to negotiate. "1.1" never offers HTTP/2. "3"
+    \\          attempts HTTP/3 with fallback, "3-only" requires it, while
+    \\          "auto" uses curl's normal protocol negotiation.
     \\          Defaults to "auto".
-    \\          Allowed values: "auto", "1.1".
+    \\          Allowed values: "auto", "1.1", "3", "3-only".
     \\  --insecure-disable-tls-host-verification
     \\          Disables host verification on all HTTP requests.
     \\          Only set this if you understand and accept the risk.
@@ -510,6 +511,10 @@
     \\  --proxy-bearer-token <TOKEN>
     \\          Token sent for bearer authentication with the proxy:
     \\          Proxy-Authorization: Bearer <token>.
+    \\  --trace-webapi
+    \\          Logs the first access and total count for each implemented or
+    \\          missing Web API member. Intended for compatibility profiling;
+    \\          disabled by default because it is verbose.
     \\  --timezone <IANA>
     \\          Time zone used by Date and Intl, e.g. Europe/Paris or UTC.
     \\          Defaults to the fingerprint region's zone, never the host's.

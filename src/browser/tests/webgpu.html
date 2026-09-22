@@ -1,0 +1,70 @@
+<!doctype html>
+<script src="testing.js"></script>
+
+<script id=webgpu_shape>
+const gpu = navigator.gpu;
+testing.expectEqual('[object GPU]', Object.prototype.toString.call(gpu));
+testing.expectEqual('GPU', gpu.constructor.name);
+testing.expectEqual('bgra8unorm', gpu.getPreferredCanvasFormat());
+
+const wgsl = gpu.wgslLanguageFeatures;
+testing.expectEqual(true, wgsl === gpu.wgslLanguageFeatures);
+testing.expectEqual('[object WGSLLanguageFeatures]', Object.prototype.toString.call(wgsl));
+testing.expectEqual(10, wgsl.size);
+testing.expectEqual([
+  'packed_4x8_integer_dot_product',
+  'subgroup_uniformity',
+  'immediate_address_space',
+  'linear_indexing',
+  'subgroup_id',
+  'readonly_and_readwrite_storage_textures',
+  'unrestricted_pointer_parameters',
+  'texture_and_sampler_let',
+  'pointer_composite_access',
+  'uniform_buffer_standard_layout',
+].join(','), [...wgsl].join(','));
+testing.expectEqual(true, wgsl.has('subgroup_id'));
+testing.expectEqual(false, wgsl.has('not-a-wgsl-feature'));
+</script>
+
+<script id=webgpu_adapter type=module>
+const state = await testing.async();
+let first;
+let second;
+let failure;
+try {
+  first = await navigator.gpu.requestAdapter();
+  second = await navigator.gpu.requestAdapter();
+} catch (error) {
+  failure = String(error && error.stack || error);
+}
+
+state.resolve();
+await state.done(() => {
+testing.expectEqual(undefined, failure);
+testing.expectEqual(false, first === second);
+testing.expectEqual('[object GPUAdapter]', Object.prototype.toString.call(first));
+testing.expectEqual(true, first.info === first.info);
+testing.expectEqual(true, first.features === first.features);
+testing.expectEqual(true, first.limits === first.limits);
+
+testing.expectEqual('apple', first.info.vendor);
+testing.expectEqual('metal-3', first.info.architecture);
+testing.expectEqual('', first.info.device);
+testing.expectEqual('', first.info.description);
+testing.expectEqual(32, first.info.subgroupMinSize);
+testing.expectEqual(32, first.info.subgroupMaxSize);
+testing.expectEqual(false, first.info.isFallbackAdapter);
+
+testing.expectEqual(22, first.features.size);
+testing.expectEqual('depth32float-stencil8', [...first.features][0]);
+testing.expectEqual('subgroups', [...first.features].at(-1));
+testing.expectEqual(true, first.features.has('shader-f16'));
+testing.expectEqual(false, first.features.has('not-a-gpu-feature'));
+
+testing.expectEqual(16384, first.limits.maxTextureDimension1D);
+testing.expectEqual(4294967292, first.limits.maxBufferSize);
+testing.expectEqual(1024, first.limits.maxComputeInvocationsPerWorkgroup);
+testing.expectEqual(64, first.limits.maxImmediateSize);
+});
+</script>

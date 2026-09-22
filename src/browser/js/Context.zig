@@ -127,6 +127,11 @@ execution: Execution,
 
 unknown_properties: (if (lp.IS_DEBUG) std.StringHashMapUnmanaged(UnknownPropertyStat) else void) = if (lp.IS_DEBUG) .{} else {},
 
+// Populated only with --trace-webapi. Keys are compile-time strings owned by
+// the binary, so recording an access allocates only hash-table entries.
+webapi_accesses: std.StringHashMapUnmanaged(WebApiAccessStat) = .{},
+webapi_access_sequence: usize = 0,
+
 const ModuleEntry = struct {
     // Can be null if we're asynchronously loading the module, in
     // which case resolver_promise cannot be null.
@@ -166,6 +171,18 @@ pub fn fromIsolate(isolate: js.Isolate) ?struct { *Context, *const v8.Context } 
 }
 
 pub fn deinit(self: *Context) void {
+    if (self.env.app.config.traceWebApi()) {
+        var webapi_it = self.webapi_accesses.iterator();
+        while (webapi_it.next()) |kv| {
+            log.info(.webapi_trace, "web api access summary", .{
+                .context = self.id,
+                .member = kv.key_ptr.*,
+                .occurrences = kv.value_ptr.count,
+                .first_sequence = kv.value_ptr.first_sequence,
+            });
+        }
+    }
+
     if (comptime lp.IS_DEBUG and lp.IS_TEST == false) {
         var it = self.unknown_properties.iterator();
         while (it.next()) |kv| {
@@ -214,6 +231,56 @@ pub fn deinit(self: *Context) void {
     // purge while the context is still alive.
     _ = env.pumpMessageLoop();
     v8.v8__MicrotaskQueue__DELETE(self.microtask_queue);
+}
+
+/// Record a Web API callback reached from JavaScript before dispatching to its
+/// implementation, so accesses that subsequently throw remain observable.
+pub fn traceWebApiAccess(self: *Context, comptime interface: []const u8, comptime member: []const u8, comptime kind: []const u8) void {
+    if (!self.env.app.config.traceWebApi()) return;
+
+    const key = interface ++ "." ++ member ++ ":" ++ kind;
+    const gop = self.webapi_accesses.getOrPut(self.arena.allocator(), key) catch return;
+    if (gop.found_existing) {
+        gop.value_ptr.count += 1;
+        return;
+    }
+
+    self.webapi_access_sequence += 1;
+    gop.key_ptr.* = key;
+    gop.value_ptr.* = .{
+        .count = 1,
+        .first_sequence = self.webapi_access_sequence,
+    };
+    log.info(.webapi_trace, "web api first access", .{
+        .context = self.id,
+        .member = key,
+        .sequence = self.webapi_access_sequence,
+    });
+}
+
+/// Missing members cannot use the compile-time callback wrappers above. Named
+/// property interceptors feed them here so fingerprint probes of absent APIs
+/// appear in the same ordered trace.
+pub fn traceMissingWebApiAccess(self: *Context, interface: []const u8, member: []const u8) void {
+    if (!self.env.app.config.traceWebApi()) return;
+
+    const key = std.fmt.allocPrint(self.arena.allocator(), "{s}.{s}:missing", .{ interface, member }) catch return;
+    const gop = self.webapi_accesses.getOrPut(self.arena.allocator(), key) catch return;
+    if (gop.found_existing) {
+        gop.value_ptr.count += 1;
+        return;
+    }
+
+    self.webapi_access_sequence += 1;
+    gop.value_ptr.* = .{
+        .count = 1,
+        .first_sequence = self.webapi_access_sequence,
+    };
+    log.info(.webapi_trace, "missing web api first access", .{
+        .context = self.id,
+        .member = key,
+        .sequence = self.webapi_access_sequence,
+    });
 }
 
 // The global (e.g. Window) can be reused across contexts. If you do:
@@ -1265,6 +1332,11 @@ fn stopHeapProfiler(self: *Context) !struct { []const u8, []const u8 } {
 const UnknownPropertyStat = struct {
     count: usize,
     first_stack: []const u8,
+};
+
+const WebApiAccessStat = struct {
+    count: usize,
+    first_sequence: usize,
 };
 
 // see Local.typeError

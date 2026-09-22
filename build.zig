@@ -115,6 +115,9 @@ pub fn build(b: *Build) !void {
     });
     lightpanda_module.addImport("lightpanda", lightpanda_module); // allow circular "lightpanda" import
     lightpanda_module.addImport("build_config", opts.createModule());
+    lightpanda_module.addCSourceFile(.{ .file = b.path("src/sys/angle_metal.c"), .flags = &.{"-std=c11"} });
+    lightpanda_module.addCSourceFile(.{ .file = b.path("src/sys/image_decode.c"), .flags = &.{"-std=c11"} });
+    lightpanda_module.addCSourceFile(.{ .file = b.path("src/sys/font_decode.c"), .flags = &.{"-std=c11"} });
 
     const fmt_step = b.step("fmt", "Check code formatting");
     const fmt = b.addFmt(.{
@@ -543,6 +546,16 @@ fn linkCurl(b: *Build, mod: *Build.Module, deps: Deps, is_tsan: bool, section: b
     const boringssl = buildBoringSsl(b, deps.target, deps.optimize, section);
     for (boringssl) |lib| curl.root_module.linkLibrary(lib);
 
+    // curl's production HTTP/3 backend is ngtcp2 + nghttp3. Reuse the same
+    // BoringSSL build as HTTPS so TCP/TLS and QUIC cannot drift to different
+    // crypto revisions or trust stores.
+    const nghttp3 = buildNghttp3(b, deps.target, deps.optimize, is_tsan, section);
+    const ngtcp2 = buildNgtcp2(b, deps.target, deps.optimize, is_tsan, section);
+    const ngtcp2_crypto = buildNgtcp2CryptoBoringSsl(b, deps.target, deps.optimize, is_tsan, section, ngtcp2, boringssl);
+    curl.root_module.linkLibrary(nghttp3);
+    curl.root_module.linkLibrary(ngtcp2);
+    curl.root_module.linkLibrary(ngtcp2_crypto);
+
     if (deps.target.result.os.tag == .macos) {
         // needed for proxying on mac
         const framework_path = if (b.sysroot) |sysroot|
@@ -553,6 +566,10 @@ fn linkCurl(b: *Build, mod: *Build.Module, deps: Deps, is_tsan: bool, section: b
             "/System/Library/Frameworks";
         mod.addSystemFrameworkPath(.{ .cwd_relative = framework_path });
         mod.linkFramework("CoreFoundation", .{});
+        mod.linkFramework("CoreGraphics", .{});
+        mod.linkFramework("CoreText", .{});
+        mod.linkFramework("Foundation", .{});
+        mod.linkFramework("ImageIO", .{});
         mod.linkFramework("SystemConfiguration", .{});
     }
 }
@@ -666,6 +683,22 @@ fn buildBoringSsl(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin
     sigalg_patch.addDirectoryArg(src.path("ssl"));
     const patched_ssl = sigalg_patch.addOutputDirectoryArg("boringssl-sigalg-patched");
 
+    // extensions.cc is patched too, so the ClientHello carries the two
+    // extensions Chrome 151 always sends and stock BoringSSL never does
+    // (trust_anchors 0xca34, and the unregistered 0x12e0). Without them our
+    // JA4 extension count is 16 where Chrome's is 18, on every TLS
+    // connection to every host. See tools/boringssl_clienthello_ext_patch.zig.
+    const ext_patch = b.addRunArtifact(b.addExecutable(.{
+        .name = "boringssl_clienthello_ext_patch",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/boringssl_clienthello_ext_patch.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    }));
+    ext_patch.addDirectoryArg(src.path("ssl"));
+    const patched_ext = ext_patch.addOutputDirectoryArg("boringssl-ext-patched");
+
     const mod = b.createModule(.{
         .target = target,
         .optimize = optimize,
@@ -680,6 +713,7 @@ fn buildBoringSsl(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin
     // to be reachable by the same relative names the file uses upstream.
     mod.addIncludePath(src.path("ssl"));
     mod.addCSourceFiles(.{ .root = patched_ssl, .files = &.{"ssl_privkey.cc"} });
+    mod.addCSourceFiles(.{ .root = patched_ext, .files = &.{"extensions.cc"} });
 
     const ssl_lib = b.addLibrary(.{ .name = "ssl", .root_module = mod });
     ssl_lib.installHeadersDirectory(src.path("include"), "", .{});
@@ -691,9 +725,10 @@ fn buildBoringSsl(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin
 }
 
 /// BoringSSL's libssl sources, copied from the boringssl-zig wrapper, minus
-/// ssl_privkey.cc which is compiled from the patched copy above. A bump that
-/// adds or removes a file here will fail to link rather than silently drop
-/// one, and the patch tool fails the build if ssl_privkey.cc itself moves.
+/// ssl_privkey.cc and extensions.cc, which are compiled from the patched
+/// copies above. A bump that adds or removes a file here will fail to link
+/// rather than silently drop one, and the patch tools fail the build if the
+/// files they rewrite move.
 const ssl_sources = &.{
     "ssl/bio_ssl.cc",
     "ssl/d1_both.cc",
@@ -703,7 +738,6 @@ const ssl_sources = &.{
     "ssl/dtls_method.cc",
     "ssl/dtls_record.cc",
     "ssl/encrypted_client_hello.cc",
-    "ssl/extensions.cc",
     "ssl/handoff.cc",
     "ssl/handshake.cc",
     "ssl/handshake_client.cc",
@@ -739,6 +773,10 @@ fn buildNghttp2(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.O
 
     const mod = cLibModule(b, target, optimize, is_tsan);
     mod.addIncludePath(dep.path("lib/includes"));
+    // The patched nghttp2_submit.c lives outside the nghttp2 tree, so its
+    // sibling headers have to be reachable by the same relative names the
+    // file uses upstream.
+    mod.addIncludePath(dep.path("lib"));
 
     const config = b.addConfigHeader(.{
         .include_path = "nghttp2ver.h",
@@ -748,6 +786,21 @@ fn buildNghttp2(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.O
         .PACKAGE_VERSION_NUM = 0x016890,
     });
     mod.addConfigHeader(config);
+
+    // nghttp2_submit.c is patched so request HEADERS frames carry Chrome's
+    // PRIORITY flag and priority block. nghttp2 removed RFC 7540 priorities
+    // from its submit API, so curl's spec never reaches the wire; the packer
+    // is intact. See tools/nghttp2_chrome_patch.zig.
+    const chrome_patch = b.addRunArtifact(b.addExecutable(.{
+        .name = "nghttp2_chrome_patch",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/nghttp2_chrome_patch.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    }));
+    chrome_patch.addDirectoryArg(dep.path("lib"));
+    const patched_nghttp2 = chrome_patch.addOutputDirectoryArg("nghttp2-chrome-patched");
 
     const lib = sectionize(b.addLibrary(.{ .name = "nghttp2", .root_module = mod }), section);
 
@@ -762,18 +815,170 @@ fn buildNghttp2(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.O
             "-DHAVE_NETINET_IN_H",
         },
         .files = &.{
-            "sfparse.c",                 "nghttp2_alpn.c",   "nghttp2_buf.c",
-            "nghttp2_callbacks.c",       "nghttp2_debug.c",  "nghttp2_extpri.c",
-            "nghttp2_frame.c",           "nghttp2_hd.c",     "nghttp2_hd_huffman.c",
-            "nghttp2_hd_huffman_data.c", "nghttp2_helper.c", "nghttp2_http.c",
-            "nghttp2_map.c",             "nghttp2_mem.c",    "nghttp2_option.c",
-            "nghttp2_outbound_item.c",   "nghttp2_pq.c",     "nghttp2_priority_spec.c",
-            "nghttp2_queue.c",           "nghttp2_rcbuf.c",  "nghttp2_session.c",
-            "nghttp2_stream.c",          "nghttp2_submit.c", "nghttp2_version.c",
-            "nghttp2_ratelim.c",         "nghttp2_time.c",
+            "sfparse.c",                 "nghttp2_alpn.c",    "nghttp2_buf.c",
+            "nghttp2_callbacks.c",       "nghttp2_debug.c",   "nghttp2_extpri.c",
+            "nghttp2_frame.c",           "nghttp2_hd.c",      "nghttp2_hd_huffman.c",
+            "nghttp2_hd_huffman_data.c", "nghttp2_helper.c",  "nghttp2_http.c",
+            "nghttp2_map.c",             "nghttp2_mem.c",     "nghttp2_option.c",
+            "nghttp2_outbound_item.c",   "nghttp2_pq.c",      "nghttp2_priority_spec.c",
+            "nghttp2_queue.c",           "nghttp2_rcbuf.c",   "nghttp2_session.c",
+            "nghttp2_stream.c",          "nghttp2_version.c", "nghttp2_ratelim.c",
+            "nghttp2_time.c",
+        },
+    });
+    mod.addCSourceFiles(.{
+        .root = patched_nghttp2,
+        .flags = &.{
+            "-DNGHTTP2_STATICLIB",
+            "-DHAVE_TIME_H",
+            "-DHAVE_ARPA_INET_H",
+            "-DHAVE_NETINET_IN_H",
+        },
+        .files = &.{"nghttp2_submit.c"},
+    });
+
+    return lib;
+}
+
+fn buildNghttp3(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, is_tsan: bool, section: bool) *Build.Step.Compile {
+    const dep = b.dependency("nghttp3", .{});
+
+    const mod = cLibModule(b, target, optimize, is_tsan);
+    mod.addIncludePath(dep.path("lib"));
+    mod.addIncludePath(dep.path("lib/includes"));
+    const chrome_patch = b.addRunArtifact(b.addExecutable(.{
+        .name = "nghttp3_chrome_patch",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/nghttp3_chrome_patch.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    }));
+    chrome_patch.addDirectoryArg(dep.path("lib"));
+    const patched_nghttp3 = chrome_patch.addOutputDirectoryArg("nghttp3-chrome-patched");
+    mod.addCSourceFiles(.{
+        .root = patched_nghttp3,
+        .flags = &.{ "-DBUILDING_NGHTTP3", "-DHAVE_UNISTD_H=1" },
+        .files = &.{"nghttp3_stream.c"},
+    });
+    mod.addCSourceFiles(.{
+        .root = dep.path("lib"),
+        .flags = &.{ "-DBUILDING_NGHTTP3", "-DHAVE_UNISTD_H=1" },
+        .files = &.{
+            "nghttp3_rcbuf.c",    "nghttp3_mem.c",           "nghttp3_str.c",
+            "nghttp3_conv.c",     "nghttp3_buf.c",           "nghttp3_ringbuf.c",
+            "nghttp3_pq.c",       "nghttp3_map.c",           "nghttp3_ksl.c",
+            "nghttp3_qpack.c",    "nghttp3_qpack_huffman.c", "nghttp3_qpack_huffman_data.c",
+            "nghttp3_err.c",      "nghttp3_debug.c",         "nghttp3_conn.c",
+            "nghttp3_frame.c",    "nghttp3_tnode.c",         "nghttp3_vec.c",
+            "nghttp3_gaptr.c",    "nghttp3_idtr.c",          "nghttp3_range.c",
+            "nghttp3_http.c",     "nghttp3_version.c",       "nghttp3_balloc.c",
+            "nghttp3_opl.c",      "nghttp3_objalloc.c",      "nghttp3_unreachable.c",
+            "nghttp3_settings.c", "nghttp3_callbacks.c",     "nghttp3_ratelim.c",
+            "sfparse/sfparse.c",
         },
     });
 
+    const lib = sectionize(b.addLibrary(.{ .name = "nghttp3", .root_module = mod }), section);
+    lib.installHeadersDirectory(dep.path("lib/includes/nghttp3"), "nghttp3", .{});
+    return lib;
+}
+
+fn buildNgtcp2(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, is_tsan: bool, section: bool) *Build.Step.Compile {
+    const dep = b.dependency("ngtcp2", .{});
+
+    const mod = cLibModule(b, target, optimize, is_tsan);
+    mod.addIncludePath(dep.path("lib"));
+    mod.addIncludePath(dep.path("lib/includes"));
+    const chrome_patch = b.addRunArtifact(b.addExecutable(.{
+        .name = "ngtcp2_chrome_patch",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/ngtcp2_chrome_patch.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    }));
+    chrome_patch.addDirectoryArg(dep.path("lib"));
+    const patched_ngtcp2 = chrome_patch.addOutputDirectoryArg("ngtcp2-chrome-patched");
+    mod.addCSourceFiles(.{
+        .root = patched_ngtcp2,
+        .flags = &.{
+            "-DBUILDING_NGTCP2",
+            "-DHAVE_ARPA_INET_H=1",
+            "-DHAVE_NETINET_IN_H=1",
+            "-DHAVE_UNISTD_H=1",
+            "-DHAVE_DECL_BE64TOH=0",
+            "-DHAVE_DECL_BSWAP_64=0",
+        },
+        .files = &.{"ngtcp2_transport_params.c"},
+    });
+    mod.addCSourceFiles(.{
+        .root = dep.path("lib"),
+        .flags = &.{
+            "-DBUILDING_NGTCP2",
+            "-DHAVE_ARPA_INET_H=1",
+            "-DHAVE_NETINET_IN_H=1",
+            "-DHAVE_UNISTD_H=1",
+            "-DHAVE_DECL_BE64TOH=0",
+            "-DHAVE_DECL_BSWAP_64=0",
+        },
+        .files = &.{
+            "ngtcp2_pkt.c",       "ngtcp2_conv.c",        "ngtcp2_str.c",
+            "ngtcp2_vec.c",       "ngtcp2_buf.c",         "ngtcp2_conn.c",
+            "ngtcp2_mem.c",       "ngtcp2_pq.c",          "ngtcp2_map.c",
+            "ngtcp2_rob.c",       "ngtcp2_ppe.c",         "ngtcp2_crypto.c",
+            "ngtcp2_err.c",       "ngtcp2_range.c",       "ngtcp2_acktr.c",
+            "ngtcp2_rtb.c",       "ngtcp2_frame_chain.c", "ngtcp2_strm.c",
+            "ngtcp2_idtr.c",      "ngtcp2_gaptr.c",       "ngtcp2_ringbuf.c",
+            "ngtcp2_log.c",       "ngtcp2_qlog.c",        "ngtcp2_cid.c",
+            "ngtcp2_ksl.c",       "ngtcp2_cc.c",          "ngtcp2_bbr.c",
+            "ngtcp2_addr.c",      "ngtcp2_path.c",        "ngtcp2_pv.c",
+            "ngtcp2_pmtud.c",     "ngtcp2_version.c",     "ngtcp2_rst.c",
+            "ngtcp2_wf.c",        "ngtcp2_opl.c",         "ngtcp2_balloc.c",
+            "ngtcp2_objalloc.c",  "ngtcp2_unreachable.c", "ngtcp2_settings.c",
+            "ngtcp2_callbacks.c", "ngtcp2_dcidtr.c",      "ngtcp2_pcg.c",
+            "ngtcp2_ratelim.c",   "ngtcp2_conn_info.c",   "ngtcp2_fmt.c",
+        },
+    });
+
+    const lib = sectionize(b.addLibrary(.{ .name = "ngtcp2", .root_module = mod }), section);
+    lib.installHeadersDirectory(dep.path("lib/includes/ngtcp2"), "ngtcp2", .{});
+    return lib;
+}
+
+fn buildNgtcp2CryptoBoringSsl(
+    b: *Build,
+    target: Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    is_tsan: bool,
+    section: bool,
+    ngtcp2: *Build.Step.Compile,
+    boringssl: [2]*Build.Step.Compile,
+) *Build.Step.Compile {
+    const dep = b.dependency("ngtcp2", .{});
+
+    const mod = cLibModule(b, target, optimize, is_tsan);
+    mod.addIncludePath(dep.path("lib"));
+    mod.addIncludePath(dep.path("lib/includes"));
+    mod.addIncludePath(dep.path("crypto"));
+    mod.addIncludePath(dep.path("crypto/includes"));
+    mod.linkLibrary(ngtcp2);
+    for (boringssl) |lib| mod.linkLibrary(lib);
+    mod.addCSourceFiles(.{
+        .root = dep.path("crypto"),
+        .flags = &.{
+            "-DBUILDING_NGTCP2",
+            "-DHAVE_ARPA_INET_H=1",
+            "-DHAVE_NETINET_IN_H=1",
+            "-DHAVE_UNISTD_H=1",
+            "-DHAVE_DECL_BE64TOH=0",
+            "-DHAVE_DECL_BSWAP_64=0",
+        },
+        .files = &.{ "boringssl/boringssl.c", "shared.c" },
+    });
+
+    const lib = sectionize(b.addLibrary(.{ .name = "ngtcp2_crypto_boringssl", .root_module = mod }), section);
+    lib.installHeadersDirectory(dep.path("crypto/includes/ngtcp2"), "ngtcp2", .{});
     return lib;
 }
 
@@ -813,6 +1018,8 @@ fn buildCurl(
         .HAVE_LIBZ = true,
         .HAVE_BROTLI = true,
         .USE_NGHTTP2 = true,
+        .USE_NGHTTP3 = true,
+        .USE_NGTCP2 = true,
 
         .USE_OPENSSL = true,
         .OPENSSL_IS_BORINGSSL = true,
@@ -1059,6 +1266,50 @@ fn buildCurl(
     // to be reachable by the same relative names they use upstream.
     mod.addIncludePath(dep.path("lib"));
 
+    // curl exposes no API for the client QUIC transport parameters. Patch its
+    // ngtcp2 setup so the values visible in the handshake match Chrome's.
+    const quic_patch = b.addRunArtifact(b.addExecutable(.{
+        .name = "curl_quic_patch",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/curl_quic_patch.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    }));
+    quic_patch.addDirectoryArg(dep.path("lib/vquic"));
+    const patched_quic = quic_patch.addOutputDirectoryArg("curl-quic-patched");
+    mod.addCSourceFiles(.{
+        .root = patched_quic,
+        .flags = &.{
+            "-D_GNU_SOURCE",
+            "-DHAVE_CONFIG_H",
+            "-DCURL_STATICLIB",
+            "-DBUILDING_LIBCURL",
+        },
+        .files = &.{"cf-ngtcp2-cmn.c"},
+    });
+
+    const h3_patch = b.addRunArtifact(b.addExecutable(.{
+        .name = "curl_h3_patch",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/curl_h3_patch.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    }));
+    h3_patch.addDirectoryArg(dep.path("lib/vquic"));
+    const patched_h3 = h3_patch.addOutputDirectoryArg("curl-h3-patched");
+    mod.addCSourceFiles(.{
+        .root = patched_h3,
+        .flags = &.{
+            "-D_GNU_SOURCE",
+            "-DHAVE_CONFIG_H",
+            "-DCURL_STATICLIB",
+            "-DBUILDING_LIBCURL",
+        },
+        .files = &.{ "cf-ngtcp2.c", "cf-ngtcp2-proxy.c" },
+    });
+
     mod.addCSourceFiles(.{
         .root = dep.path("lib"),
         .flags = &.{
@@ -1069,56 +1320,55 @@ fn buildCurl(
         },
         .files = &.{
             // You can include all files from lib, libcurl uses #ifdef-guards to exclude code for disabled functions
-            "altsvc.c",              "amigaos.c",             "api.c",                   "bufq.c",
-            "bufref.c",              "cf-h1-proxy.c",         "cf-h2-proxy.c",           "cf-haproxy.c",
-            "cf-https-connect.c",    "cf-ip-happy.c",         "cf-recvbuf.c",            "cf-setup.c",
-            "cf-socket.c",           "cfilters.c",            "conncache.c",             "connect.c",
-            "content_encoding.c",    "cookie.c",              "creds.c",                 "cshutdn.c",
-            "curl_addrinfo.c",       "curl_ed25519.c",        "curl_endian.c",           "curl_fnmatch.c",
-            "curl_fopen.c",          "curl_get_line.c",       "curl_gethostname.c",      "curl_gssapi.c",
-            "curl_memrchr.c",        "curl_ntlm_core.c",      "curl_range.c",            "curl_sasl.c",
-            "curl_sha512_256.c",     "curl_share.c",          "curl_sspi.c",             "curl_threads.c",
-            "curl_trc.c",            "curlx/base64.c",        "curlx/basename.c",        "curlx/dynbuf.c",
-            "curlx/fopen.c",         "curlx/inet_ntop.c",     "curlx/inet_pton.c",       "curlx/multibyte.c",
-            "curlx/nonblock.c",      "curlx/snprintf.c",      "curlx/strcopy.c",         "curlx/strdup.c",
-            "curlx/strerr.c",        "curlx/strparse.c",      "curlx/timediff.c",        "curlx/timeval.c",
-            "curlx/version_win32.c", "curlx/wait.c",          "curlx/warnless.c",        "curlx/winapi.c",
-            "cw-out.c",              "cw-pause.c",            "dict.c",                  "dllmain.c",
-            "dynhds.c",              "easy.c",                "easygetopt.c",            "easyoptions.c",
-            "escape.c",              "fake_addrinfo.c",       "file.c",                  "fileinfo.c",
-            "formdata.c",            "ftp.c",                 "ftplistparser.c",         "getenv.c",
-            "getinfo.c",             "gopher.c",              "hash.c",                  "headers.c",
+            "altsvc.c",               "amigaos.c",             "api.c",               "bufq.c",
+            "bufref.c",               "cf-h1-proxy.c",         "cf-h2-proxy.c",       "cf-haproxy.c",
+            "cf-https-connect.c",     "cf-ip-happy.c",         "cf-recvbuf.c",        "cf-setup.c",
+            "cf-socket.c",            "cfilters.c",            "conncache.c",         "connect.c",
+            "content_encoding.c",     "cookie.c",              "creds.c",             "cshutdn.c",
+            "curl_addrinfo.c",        "curl_ed25519.c",        "curl_endian.c",       "curl_fnmatch.c",
+            "curl_fopen.c",           "curl_get_line.c",       "curl_gethostname.c",  "curl_gssapi.c",
+            "curl_memrchr.c",         "curl_ntlm_core.c",      "curl_range.c",        "curl_sasl.c",
+            "curl_sha512_256.c",      "curl_share.c",          "curl_sspi.c",         "curl_threads.c",
+            "curl_trc.c",             "curlx/base64.c",        "curlx/basename.c",    "curlx/dynbuf.c",
+            "curlx/fopen.c",          "curlx/inet_ntop.c",     "curlx/inet_pton.c",   "curlx/multibyte.c",
+            "curlx/nonblock.c",       "curlx/snprintf.c",      "curlx/strcopy.c",     "curlx/strdup.c",
+            "curlx/strerr.c",         "curlx/strparse.c",      "curlx/timediff.c",    "curlx/timeval.c",
+            "curlx/version_win32.c",  "curlx/wait.c",          "curlx/warnless.c",    "curlx/winapi.c",
+            "cw-out.c",               "cw-pause.c",            "dict.c",              "dllmain.c",
+            "dynhds.c",               "easy.c",                "easygetopt.c",        "easyoptions.c",
+            "escape.c",               "fake_addrinfo.c",       "file.c",              "fileinfo.c",
+            "formdata.c",             "ftp.c",                 "ftplistparser.c",     "getenv.c",
+            "getinfo.c",              "gopher.c",              "hash.c",              "headers.c",
             // http.c and http2.c are compiled from the patched copies below.
-            "hmac.c",                "hsts.c",                "http1.c",                 "http_aws_sigv4.c",
-            "http_chunks.c",         "http_digest.c",         "http_httpsig.c",          "http_negotiate.c",
-            "http_ntlm.c",           "http_proxy.c",          "idn.c",                   "if2ip.c",
-            "imap.c",                "ldap.c",                "llist.c",                 "macos.c",
-            "md4.c",                 "md5.c",                 "memdebug.c",              "mime.c",
-            "mprintf.c",             "mqtt.c",                "multi.c",                 "multi_ev.c",
-            "multi_ntfy.c",          "netrc.c",               "openldap.c",              "parsedate.c",
-            "peer.c",                "pingpong.c",            "pop3.c",                  "progress.c",
-            "protocol.c",            "proxy.c",               "psl.c",                   "rand.c",
-            "ratelimit.c",           "request.c",             "rtsp.c",                  "select.c",
-            "sendf.c",               "setopt.c",              "sha256.c",                "slist.c",
-            "smb.c",                 "smtp.c",                "socketpair.c",            "socks.c",
-            "socks_gssapi.c",        "socks_sspi.c",          "splay.c",                 "strcase.c",
-            "strequal.c",            "strerror.c",            "system_win32.c",          "telnet.c",
-            "tftp.c",                "thrdpool.c",            "thrdqueue.c",             "transfer.c",
-            "uint-bset.c",           "uint-hash.c",           "uint-hashset.c",          "uint-spbset.c",
-            "uint-table.c",          "url.c",                 "urlapi.c",                "vauth/cleartext.c",
-            "vauth/cram.c",          "vauth/digest.c",        "vauth/digest_sspi.c",     "vauth/gsasl.c",
-            "vauth/krb5_gssapi.c",   "vauth/krb5_sspi.c",     "vauth/ntlm.c",            "vauth/ntlm_sspi.c",
-            "vauth/oauth2.c",        "vauth/spnego_gssapi.c", "vauth/spnego_sspi.c",     "vauth/vauth.c",
-            "vdns/asyn-ares.c",      "vdns/asyn-base.c",      "vdns/asyn-thrdd.c",       "vdns/cf-dns.c",
-            "vdns/dnscache.c",       "vdns/doh.c",            "vdns/hostip.c",           "vdns/hostip4.c",
-            "vdns/hostip6.c",        "vdns/httpsrr.c",        "version.c",               "vquic/capsule.c",
-            "vquic/cf-capsule.c",    "vquic/cf-ngtcp2-cmn.c", "vquic/cf-ngtcp2-proxy.c", "vquic/cf-ngtcp2.c",
-            "vquic/cf-quiche.c",     "vquic/vquic-tls.c",     "vquic/vquic.c",           "vssh/libssh.c",
-            "vssh/libssh2.c",        "vssh/vssh.c",           "vtls/apple.c",            "vtls/cipher_suite.c",
-            "vtls/gtls.c",           "vtls/hostcheck.c",      "vtls/keylog.c",           "vtls/mbedtls.c",
-            "vtls/openssl.c",        "vtls/rustls.c",         "vtls/schannel.c",         "vtls/schannel_verify.c",
-            "vtls/vtls.c",           "vtls/vtls_config.c",    "vtls/vtls_scache.c",      "vtls/vtls_spack.c",
-            "vtls/wolfssl.c",        "vtls/x509asn1.c",       "ws.c",
+            "hmac.c",                 "hsts.c",                "http1.c",             "http_aws_sigv4.c",
+            "http_chunks.c",          "http_digest.c",         "http_httpsig.c",      "http_negotiate.c",
+            "http_ntlm.c",            "http_proxy.c",          "idn.c",               "if2ip.c",
+            "imap.c",                 "ldap.c",                "llist.c",             "macos.c",
+            "md4.c",                  "md5.c",                 "memdebug.c",          "mime.c",
+            "mprintf.c",              "mqtt.c",                "multi.c",             "multi_ev.c",
+            "multi_ntfy.c",           "netrc.c",               "openldap.c",          "parsedate.c",
+            "peer.c",                 "pingpong.c",            "pop3.c",              "progress.c",
+            "protocol.c",             "proxy.c",               "psl.c",               "rand.c",
+            "ratelimit.c",            "request.c",             "rtsp.c",              "select.c",
+            "sendf.c",                "setopt.c",              "sha256.c",            "slist.c",
+            "smb.c",                  "smtp.c",                "socketpair.c",        "socks.c",
+            "socks_gssapi.c",         "socks_sspi.c",          "splay.c",             "strcase.c",
+            "strequal.c",             "strerror.c",            "system_win32.c",      "telnet.c",
+            "tftp.c",                 "thrdpool.c",            "thrdqueue.c",         "transfer.c",
+            "uint-bset.c",            "uint-hash.c",           "uint-hashset.c",      "uint-spbset.c",
+            "uint-table.c",           "url.c",                 "urlapi.c",            "vauth/cleartext.c",
+            "vauth/cram.c",           "vauth/digest.c",        "vauth/digest_sspi.c", "vauth/gsasl.c",
+            "vauth/krb5_gssapi.c",    "vauth/krb5_sspi.c",     "vauth/ntlm.c",        "vauth/ntlm_sspi.c",
+            "vauth/oauth2.c",         "vauth/spnego_gssapi.c", "vauth/spnego_sspi.c", "vauth/vauth.c",
+            "vdns/asyn-ares.c",       "vdns/asyn-base.c",      "vdns/asyn-thrdd.c",   "vdns/cf-dns.c",
+            "vdns/dnscache.c",        "vdns/doh.c",            "vdns/hostip.c",       "vdns/hostip4.c",
+            "vdns/hostip6.c",         "vdns/httpsrr.c",        "version.c",           "vquic/capsule.c",
+            "vquic/cf-capsule.c",     "vquic/cf-quiche.c",     "vquic/vquic-tls.c",   "vquic/vquic.c",
+            "vssh/libssh.c",          "vssh/libssh2.c",        "vssh/vssh.c",         "vtls/apple.c",
+            "vtls/cipher_suite.c",    "vtls/gtls.c",           "vtls/hostcheck.c",    "vtls/keylog.c",
+            "vtls/mbedtls.c",         "vtls/openssl.c",        "vtls/rustls.c",       "vtls/schannel.c",
+            "vtls/schannel_verify.c", "vtls/vtls.c",           "vtls/vtls_config.c",  "vtls/vtls_scache.c",
+            "vtls/vtls_spack.c",      "vtls/wolfssl.c",        "vtls/x509asn1.c",     "ws.c",
         },
     });
 

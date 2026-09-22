@@ -83,10 +83,12 @@
 }
 </script>
 
-<script id=matchMedia_unsupported_feature>
+<script id=matchMedia_color_scheme_and_unsupported_feature>
 {
-  // Unknown features evaluate to false per Media Queries Level 4.
-  testing.expectEqual(false, window.matchMedia('(prefers-color-scheme: dark)').matches);
+  // The selected fingerprint follows the captured macOS dark appearance.
+  testing.expectEqual(true, window.matchMedia('(prefers-color-scheme: dark)').matches);
+  testing.expectEqual(false, window.matchMedia('(prefers-color-scheme: light)').matches);
+  // Unknown features still evaluate to false per Media Queries Level 4.
   testing.expectEqual(false, window.matchMedia('(hover: hover)').matches);
 }
 </script>

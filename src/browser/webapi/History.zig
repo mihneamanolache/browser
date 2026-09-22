@@ -148,8 +148,8 @@ pub const JsApi = struct {
     pub const length = bridge.accessor(History.getLength, null, .{});
     pub const scrollRestoration = bridge.accessor(History.getScrollRestoration, History.setScrollRestoration, .{});
     pub const state = bridge.accessor(History.getState, null, .{});
-    pub const pushState = bridge.function(History.pushState, .{});
-    pub const replaceState = bridge.function(History.replaceState, .{});
+    pub const pushState = bridge.function(History.pushState, .{ .arity = 2 });
+    pub const replaceState = bridge.function(History.replaceState, .{ .arity = 2 });
     pub const back = bridge.function(History.back, .{});
     pub const forward = bridge.function(History.forward, .{});
     pub const go = bridge.function(History.go, .{});

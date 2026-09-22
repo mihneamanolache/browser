@@ -1503,13 +1503,10 @@ fn viewportAxis(self: *Element, frame: *Frame, comptime axis: Axis) ?f64 {
     if (tag != .html and tag != .body) {
         return null;
     }
-    const doc = self.asNode().ownerDocument(frame) orelse frame.document;
-    if ((tag == .body) != doc.isQuirksMode()) {
-        return null;
-    }
-    // In quicks mode, the root element (the body) reports the viewport for
-    // clientWidth and clientHeight rather than its own MASSIVE box. This
-    // fixes jstracker's uiContourMap which attempts to tile the clientHeight
+    // The document element reports the viewport. A body without an explicit
+    // width/height fills its containing block in standards mode and is the
+    // root scroller in quirks mode, so the observable value is the viewport
+    // in either case. This fixes jstracker's uiContourMap, which attempts to tile the clientHeight
     // of the body. (https://github.com/lightpanda-io/browser/issues/3251)
     const viewport = frame.page.getViewport();
     return @floatFromInt(if (axis == .width) viewport.width else viewport.height);
@@ -2493,7 +2490,7 @@ pub const JsApi = struct {
         return self.setAttribute(name, .wrap(try value.toStringSlice()), frame);
     }
 
-    pub const setAttributeNS = bridge.function(_setAttributeNS, .{ .ce_reactions = true });
+    pub const setAttributeNS = bridge.function(_setAttributeNS, .{ .ce_reactions = true, .arity = 3 });
     fn _setAttributeNS(self: *Element, maybe_ns: ?[]const u8, qn: []const u8, value: js.Value, frame: *Frame) !void {
         return self.setAttributeNS(maybe_ns, qn, .wrap(try value.toStringSlice()), frame);
     }
@@ -2569,10 +2566,10 @@ pub const JsApi = struct {
     pub const style = bridge.accessor(Element.getOrCreateStyle, Element.setStyle, .{});
     pub const attributes = bridge.accessor(Element.getAttributeNamedNodeMap, null, .{});
     pub const hasAttribute = bridge.function(Element.hasAttribute, .{});
-    pub const hasAttributeNS = bridge.function(Element.hasAttributeNS, .{});
+    pub const hasAttributeNS = bridge.function(Element.hasAttributeNS, .{ .arity = 2 });
     pub const hasAttributes = bridge.function(Element.hasAttributes, .{});
     pub const getAttribute = bridge.function(Element.getAttribute, .{});
-    pub const getAttributeNS = bridge.function(Element.getAttributeNS, .{});
+    pub const getAttributeNS = bridge.function(Element.getAttributeNS, .{ .arity = 2 });
     pub const getAttributeNode = bridge.function(Element.getAttributeNode, .{});
     pub const setAttributeNode = bridge.function(Element.setAttributeNode, .{ .ce_reactions = true });
     pub const removeAttribute = bridge.function(Element.removeAttribute, .{ .ce_reactions = true });
@@ -2614,14 +2611,14 @@ pub const JsApi = struct {
             .serializable = init.serializable,
         }, frame);
     }
-    pub const replaceChildren = bridge.function(Element.replaceChildren, .{ .ce_reactions = true });
-    pub const replaceWith = bridge.function(Element.replaceWith, .{ .ce_reactions = true });
+    pub const replaceChildren = bridge.function(Element.replaceChildren, .{ .ce_reactions = true, .arity = 0 });
+    pub const replaceWith = bridge.function(Element.replaceWith, .{ .ce_reactions = true, .arity = 0 });
     pub const remove = bridge.function(Element.remove, .{ .ce_reactions = true });
-    pub const append = bridge.function(Element.append, .{ .ce_reactions = true });
-    pub const prepend = bridge.function(Element.prepend, .{ .ce_reactions = true });
+    pub const append = bridge.function(Element.append, .{ .ce_reactions = true, .arity = 0 });
+    pub const prepend = bridge.function(Element.prepend, .{ .ce_reactions = true, .arity = 0 });
     pub const moveBefore = bridge.function(Element.moveBefore, .{ .ce_reactions = true });
-    pub const before = bridge.function(Element.before, .{ .ce_reactions = true });
-    pub const after = bridge.function(Element.after, .{ .ce_reactions = true });
+    pub const before = bridge.function(Element.before, .{ .ce_reactions = true, .arity = 0 });
+    pub const after = bridge.function(Element.after, .{ .ce_reactions = true, .arity = 0 });
     pub const firstElementChild = bridge.accessor(Element.firstElementChild, null, .{});
     pub const lastElementChild = bridge.accessor(Element.lastElementChild, null, .{});
     pub const nextElementSibling = bridge.accessor(Element.nextElementSibling, null, .{});
@@ -2633,7 +2630,7 @@ pub const JsApi = struct {
     pub const querySelectorAll = bridge.function(Element.querySelectorAll, .{});
     pub const closest = bridge.function(Element.closest, .{});
     pub const getAnimations = bridge.function(Element.getAnimations, .{});
-    pub const animate = bridge.function(Element.animate, .{});
+    pub const animate = bridge.function(Element.animate, .{ .arity = 1 });
     pub const checkVisibility = bridge.function(Element.checkVisibility, .{});
     pub const clientWidth = bridge.accessor(Element.getClientWidth, null, .{});
     pub const clientHeight = bridge.accessor(Element.getClientHeight, null, .{});
@@ -2651,7 +2648,7 @@ pub const JsApi = struct {
     pub const getClientRects = bridge.function(Element.getClientRects, .{});
     pub const getBoundingClientRect = bridge.function(Element.getBoundingClientRect, .{});
     pub const getElementsByTagName = bridge.function(Element.getElementsByTagName, .{});
-    pub const getElementsByTagNameNS = bridge.function(Element.getElementsByTagNameNS, .{});
+    pub const getElementsByTagNameNS = bridge.function(Element.getElementsByTagNameNS, .{ .arity = 2 });
     pub const getElementsByClassName = bridge.function(Element.getElementsByClassName, .{});
     pub const children = bridge.accessor(Element.getChildren, null, .{});
     pub const focus = bridge.function(Element.focus, .{});

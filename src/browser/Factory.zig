@@ -54,7 +54,10 @@ _page: *Page,
 _arena: Allocator,
 _slab: SlabAllocator,
 _documents: std.ArrayList(u32) = .empty, // ids of the documents _we_ created
+_angle_contexts: std.ArrayList(*anyopaque) = .empty,
 _document_registry: *DocumentRegistry, // &browser.documents
+
+extern fn lp_angle_destroy(*anyopaque) void;
 
 pub fn init(page: *Page, arena: Allocator, document_registry: *DocumentRegistry) Factory {
     return .{
@@ -66,9 +69,14 @@ pub fn init(page: *Page, arena: Allocator, document_registry: *DocumentRegistry)
 }
 
 pub fn deinit(self: *Factory) void {
+    for (self._angle_contexts.items) |context| lp_angle_destroy(context);
     for (self._documents.items) |index| {
         self._document_registry.release(index);
     }
+}
+
+pub fn registerAngleContext(self: *Factory, context: *anyopaque) !void {
+    try self._angle_contexts.append(self._arena, context);
 }
 
 pub fn storageAllocator(self: *Factory) Allocator {

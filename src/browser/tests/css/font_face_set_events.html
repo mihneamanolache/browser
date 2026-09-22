@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<script src="../testing.js"></script>
+
+<script id="font_set_lifecycle" type="module">
+  const state = await testing.async();
+  const set = document.fonts;
+  const events = [];
+  for (const name of ['loading', 'loadingdone', 'loadingerror']) {
+    set.addEventListener(name, () => events.push(name));
+  }
+
+  const good = new FontFace('Event Probe', 'local(Arial)');
+  set.add(good);
+  const firstPromise = set.load('12px Event Probe');
+  const firstMid = { set: set.status, face: good.status, events: [...events] };
+  await firstPromise;
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const firstEvents = [...events];
+  await set.load('12px Event Probe');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const repeatEvents = [...events];
+
+  const bad = new FontFace('Missing Event Probe', 'local(NoSuchFontXYZ)');
+  set.add(bad);
+  const errorPromise = set.load('12px Missing Event Probe');
+  const errorMid = { set: set.status, face: bad.status, events: [...events] };
+  const error = await errorPromise.then(() => null, e => e);
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  state.resolve();
+  await state.done(() => {
+    testing.expectEqual('loading', firstMid.set);
+    testing.expectEqual('loaded', firstMid.face);
+    testing.expectEqual(0, firstMid.events.length);
+    testing.expectEqual(['loading', 'loadingdone'], firstEvents);
+    testing.expectEqual(firstEvents, repeatEvents);
+    testing.expectEqual('loading', errorMid.set);
+    testing.expectEqual('error', errorMid.face);
+    testing.expectEqual(repeatEvents, errorMid.events);
+    testing.expectEqual('NetworkError', error.name);
+    testing.expectEqual(['loading', 'loadingdone', 'loading', 'loadingdone', 'loadingerror'], events);
+    testing.expectEqual('loaded', set.status);
+    set.delete(good);
+    set.delete(bad);
+  });
+</script>

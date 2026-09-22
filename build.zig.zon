@@ -22,6 +22,14 @@
             .url = "https://github.com/nghttp2/nghttp2/releases/download/v1.69.0/nghttp2-1.69.0.tar.gz",
             .hash = "N-V-__8AAMHpvwChC6orFCDB8MeiumT6OlfmKfmrWlak7Int",
         },
+        .nghttp3 = .{
+            .url = "https://github.com/ngtcp2/nghttp3/releases/download/v1.18.0/nghttp3-1.18.0.tar.xz",
+            .hash = "N-V-__8AACIRMQC5n2gMbQs6uNoXpnY00q7K_3ePaRDb3r0s",
+        },
+        .ngtcp2 = .{
+            .url = "https://github.com/ngtcp2/ngtcp2/releases/download/v1.25.0/ngtcp2-1.25.0.tar.xz",
+            .hash = "N-V-__8AADwxaQCTJkOX_hQ27ZB-ox3TiXC3K25GoJCazPOJ",
+        },
         .@"boringssl-zig" = .{
             .url = "git+https://github.com/lightpanda-io/boringssl-zig.git#f07cc58fa4a051eb0985287e691db5dbb0e7e76f",
             .hash = "boringssl-0.1.0-VtJeWd1OAAAQ5AuNOZGP5a_5ZyNn5BfeE-jiKqEm2gsE",

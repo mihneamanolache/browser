@@ -29,6 +29,26 @@ const Context = @import("Context.zig");
 
 const v8 = js.v8;
 
+/// Wrap a generated Web API callback with optional access tracing while
+/// preserving the implementation's receiver validation and exception path.
+pub fn tracedCallback(
+    comptime JsApi: type,
+    comptime member: []const u8,
+    comptime kind: []const u8,
+    comptime callback: *const fn (?*const v8.FunctionCallbackInfo) callconv(.c) void,
+) *const fn (?*const v8.FunctionCallbackInfo) callconv(.c) void {
+    const interface = if (@hasDecl(JsApi.Meta, "name")) JsApi.Meta.name else @typeName(JsApi);
+    return struct {
+        fn wrap(handle: ?*const v8.FunctionCallbackInfo) callconv(.c) void {
+            const v8_isolate = v8.v8__FunctionCallbackInfo__GetIsolate(handle).?;
+            if (Context.fromIsolate(.{ .handle = v8_isolate })) |resolved| {
+                resolved[0].traceWebApiAccess(interface, member, kind);
+            }
+            callback(handle);
+        }
+    }.wrap;
+}
+
 pub fn Builder(comptime T: type) type {
     return struct {
         pub const @"type" = T;
@@ -127,11 +147,12 @@ pub const Constructor = struct {
         // js.Function) as its first parameter. Used by HTMLElement to support
         // direct instantiation of custom elements via `new MyElement()`.
         new_target: bool = false,
+        arity: ?c_int = null,
     };
 
     fn init(comptime T: type, comptime func: anytype, comptime opts: Opts) Constructor {
         return .{
-            .arity = comptime Function.getArity(@TypeOf(func), if (opts.new_target) 1 else 0),
+            .arity = opts.arity orelse comptime Function.getArity(@TypeOf(func), if (opts.new_target) 1 else 0),
             .func = struct {
                 fn wrap(handle: ?*const v8.FunctionCallbackInfo) callconv(.c) void {
                     const v8_isolate = v8.v8__FunctionCallbackInfo__GetIsolate(handle).?;
@@ -181,7 +202,7 @@ pub const Function = struct {
             .js_name = opts.js_name,
             .exposed = opts.exposed,
             .rejects_bad_receiver = returnsPromise(@TypeOf(func)),
-            .arity = getArity(@TypeOf(func), if (opts.static) 0 else 1),
+            .arity = opts.arity orelse getArity(@TypeOf(func), if (opts.static) 0 else 1),
             .func = if (opts.noop) noopFunction else struct {
                 fn wrap(handle: ?*const v8.FunctionCallbackInfo) callconv(.c) void {
                     Caller.Function.call(T, handle.?, func, opts);
@@ -757,85 +778,34 @@ pub fn unknownWindowPropertyCallback(c_name: ?*const v8.Name, handle: ?*const v8
     return js.Intercepted.no;
 }
 
-// @LOG-UNKNOWN-PROPERTY
-// Only used for debugging
-// pub fn unknownObjectPropertyCallback(comptime JsApi: type) *const fn (?*const v8.Name, ?*const v8.PropertyCallbackInfo) callconv(.c) u32 {
-//     if (comptime !lp.IS_DEBUG) {
-//         @compileError("unknownObjectPropertyCallback should only be used in debug builds");
-//     }
+/// Runtime-gated missing-member interceptor used by --trace-webapi. It is
+/// installed with kNonMasking, so existing own/prototype members keep normal
+/// V8 semantics and only unresolved names reach this callback.
+pub fn unknownObjectPropertyCallback(comptime JsApi: type) *const fn (?*const v8.Name, ?*const v8.PropertyCallbackInfo) callconv(.c) u32 {
+    const interface = if (@hasDecl(JsApi.Meta, "name")) JsApi.Meta.name else @typeName(JsApi);
+    return struct {
+        fn wrap(c_name: ?*const v8.Name, handle: ?*const v8.PropertyCallbackInfo) callconv(.c) u32 {
+            const v8_isolate = v8.v8__PropertyCallbackInfo__GetIsolate(handle).?;
+            const ctx, const v8_context = Context.fromIsolate(.{ .handle = v8_isolate }) orelse return js.Intercepted.no;
+            if (!ctx.env.app.config.traceWebApi()) return js.Intercepted.no;
 
-//     return struct {
-//         fn wrap(c_name: ?*const v8.Name, handle: ?*const v8.PropertyCallbackInfo) callconv(.c) u32 {
-//             const v8_isolate = v8.v8__PropertyCallbackInfo__GetIsolate(handle).?;
+            var caller: Caller = undefined;
+            caller.initWithContext(ctx, v8_context);
+            defer caller.deinit();
 
-//             var caller: Caller = undefined;
-//             if (!caller.init(v8_isolate)) {
-//                 return js.Intercepted.no;
-//             }
-//             defer caller.deinit();
+            const local = &caller.local;
+            var hs: js.HandleScope = undefined;
+            hs.init(local.isolate);
+            defer hs.deinit();
 
-//             const local = &caller.local;
-
-//             var hs: js.HandleScope = undefined;
-//             hs.init(local.isolate);
-//             defer hs.deinit();
-
-//             const property: []const u8 = js.String.toSlice(.{ .local = local, .handle = @ptrCast(c_name.?) }) catch {
-//                 return js.Intercepted.no;
-//             };
-
-//             if (std.mem.startsWith(u8, property, "__")) {
-//                 // some frameworks will extend built-in types using a __ prefix
-//                 // these should always be safe to ignore.
-//                 return js.Intercepted.no;
-//             }
-
-//             if (std.mem.startsWith(u8, property, "jQuery")) {
-//                 return js.Intercepted.no;
-//             }
-
-//             if (JsApi == @import("../webapi/cdata/Text.zig").JsApi or JsApi == @import("../webapi/cdata/Comment.zig").JsApi) {
-//                 if (std.mem.eql(u8, property, "tagName")) {
-//                     // knockout does this, a lot.
-//                     return js.Intercepted.no;
-//                 }
-//             }
-
-//             if (JsApi == @import("../webapi/element/Html.zig").JsApi or JsApi == @import("../webapi/Element.zig").JsApi or JsApi == @import("../webapi/element/html/Custom.zig").JsApi) {
-//                 // react ?
-//                 if (std.mem.eql(u8, property, "props")) return js.Intercepted.no;
-//                 if (std.mem.eql(u8, property, "hydrated")) return js.Intercepted.no;
-//                 if (std.mem.eql(u8, property, "isHydrated")) return js.Intercepted.no;
-//             }
-
-//             if (JsApi == @import("../webapi/Console.zig").JsApi) {
-//                 if (std.mem.eql(u8, property, "firebug")) return js.Intercepted.no;
-//             }
-
-//             const ignored = std.StaticStringMap(void).initComptime(.{});
-//             if (!ignored.has(property)) {
-//                 var buf: [2048]u8 = undefined;
-//                 const key = std.fmt.bufPrint(&buf, "{s}:{s}", .{ if (@hasDecl(JsApi.Meta, "name")) JsApi.Meta.name else @typeName(JsApi), property }) catch return js.Intercepted.no;
-//                 logUnknownProperty(local, key) catch return js.Intercepted.no;
-//             }
-//             return js.Intercepted.no;
-//         }
-//     }.wrap;
-// }
-
-// fn logUnknownProperty(local: *const js.Local, key: []const u8) !void {
-//     const ctx = local.ctx;
-//     const gop = try ctx.unknown_properties.getOrPut(ctx.arena.allocator(), key);
-//     if (gop.found_existing) {
-//         gop.value_ptr.count += 1;
-//     } else {
-//         gop.key_ptr.* = try ctx.arena.dupe(u8, key);
-//         gop.value_ptr.* = .{
-//             .count = 1,
-//             .first_stack = try ctx.arena.dupe(u8, (try local.stackTrace()) orelse "???"),
-//         };
-//     }
-// }
+            const property = js.String.toSlice(.{ .local = local, .handle = @ptrCast(c_name orelse return js.Intercepted.no) }) catch return js.Intercepted.no;
+            if (!std.mem.startsWith(u8, property, "__")) {
+                ctx.traceMissingWebApiAccess(interface, property);
+            }
+            return js.Intercepted.no;
+        }
+    }.wrap;
+}
 
 // Given a Type, returns the length of the prototype chain, including self
 fn prototypeChainLength(comptime T: type) usize {
@@ -854,7 +824,7 @@ fn PrototypeType(comptime T: type) ?type {
 }
 
 fn flattenTypes(comptime Types: []const type) [countFlattenedTypes(Types)]type {
-    @setEvalBranchQuota(10_000);
+    @setEvalBranchQuota(200_000);
     var index: usize = 0;
     var flat: [countFlattenedTypes(Types)]type = undefined;
     for (Types) |T| {
@@ -872,7 +842,7 @@ fn flattenTypes(comptime Types: []const type) [countFlattenedTypes(Types)]type {
 }
 
 fn countFlattenedTypes(comptime Types: []const type) usize {
-    @setEvalBranchQuota(10_000);
+    @setEvalBranchQuota(200_000);
     var c: usize = 0;
     for (Types) |T| {
         c += if (@hasDecl(T, "registerTypes")) T.registerTypes().len else 1;
@@ -926,6 +896,13 @@ pub const JsApiLookup = struct {
     ///    const index_id = types.getId(@TypeOf(res));
     ///
     pub const Enum = blk: {
+        // std.simd.iota loops JsApis.len times at comptime and the default
+        // 1000-branch budget is per-evaluation, so this has to be raised here
+        // rather than at a caller. Adding the generated interface objects took
+        // JsApis past 1000 and broke the snapshot build with a
+        // "1000 backwards branches" error pointing at std/simd.zig.
+        @setEvalBranchQuota(200_000);
+
         var names: [JsApis.len][:0]const u8 = undefined;
         for (JsApis, 0..) |JsApi, i| {
             names[i] = @typeName(JsApi);
@@ -973,6 +950,11 @@ pub const SubType = enum {
 
 // APIs for Page/Window contexts. Used by Snapshot.zig for Page snapshot creation.
 pub const PageJsApis = flattenTypes(&.{
+    // Shape-only interface objects Chrome exposes that we otherwise lack.
+    // Registers 67 types through its registerTypes(). All are
+    // illegal-constructor, so shape is the whole observable surface --
+    // see tools/gen_webidl_interfaces.py.
+    @import("../webapi/generated_interfaces.zig"),
     @import("../webapi/AbortController.zig"),
     @import("../webapi/AbortSignal.zig"),
     @import("../webapi/Scheduler.zig"),
@@ -1001,6 +983,7 @@ pub const PageJsApis = flattenTypes(&.{
     @import("../webapi/css/MediaQueryList.zig"),
     @import("../webapi/css/StyleSheetList.zig"),
     @import("../webapi/Document.zig"),
+    @import("../webapi/FeaturePolicy.zig"),
     @import("../webapi/HTMLDocument.zig"),
     @import("../webapi/XMLDocument.zig"),
     @import("../webapi/History.zig"),
@@ -1190,6 +1173,8 @@ pub const PageJsApis = flattenTypes(&.{
     @import("../webapi/BroadcastChannel.zig"),
     @import("../webapi/Worker.zig"),
     @import("../webapi/SharedWorker.zig"),
+    @import("../webapi/ServiceWorker.zig"),
+    @import("../webapi/ServiceWorkerRegistration.zig"),
     @import("../webapi/media/MediaError.zig"),
     @import("../webapi/media/TextTrackCue.zig"),
     @import("../webapi/media/VTTCue.zig"),
@@ -1363,6 +1348,14 @@ const worker_common_apis = [_]type{
 
 pub const DedicatedWorkerJsApis = flattenTypes(&([_]type{@import("../webapi/DedicatedWorkerGlobalScope.zig")} ++ worker_common_apis));
 pub const SharedWorkerJsApis = flattenTypes(&([_]type{@import("../webapi/SharedWorkerGlobalScope.zig")} ++ worker_common_apis));
+pub const ServiceWorkerJsApis = flattenTypes(&([_]type{
+    @import("../webapi/ServiceWorkerGlobalScope.zig"),
+    @import("../webapi/ServiceWorker.zig"),
+    @import("../webapi/ServiceWorkerRegistration.zig"),
+    @import("../webapi/Client.zig"),
+    @import("../webapi/Client.zig").WindowClient,
+    @import("../webapi/event/ExtendableEvent.zig"),
+} ++ worker_common_apis));
 
 // Master list of ALL JS APIs across all contexts.
 // Used by Env (class IDs, templates), JsApiLookup, and anywhere that needs
@@ -1374,6 +1367,10 @@ pub const JsApis = blk: {
         @import("../webapi/FileReaderSync.zig").JsApi,
         @import("../webapi/DedicatedWorkerGlobalScope.zig").JsApi,
         @import("../webapi/SharedWorkerGlobalScope.zig").JsApi,
+        @import("../webapi/ServiceWorkerGlobalScope.zig").JsApi,
+        @import("../webapi/Client.zig").JsApi,
+        @import("../webapi/Client.zig").WindowClient.JsApi,
+        @import("../webapi/event/ExtendableEvent.zig").JsApi,
         @import("../webapi/WorkerGlobalScope.zig").JsApi,
         @import("../webapi/WorkerLocation.zig").JsApi,
         @import("../webapi/WorkerNavigator.zig").JsApi,

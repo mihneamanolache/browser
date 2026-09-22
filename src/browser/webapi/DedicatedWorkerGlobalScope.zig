@@ -241,6 +241,14 @@ pub const JsApi = struct {
 
     pub const Meta = struct {
         pub const name = "DedicatedWorkerGlobalScope";
+        // [Global]: Chrome exposes this interface's own members as own
+        // properties of the worker global, leaving
+        // DedicatedWorkerGlobalScope.prototype holding only constructor
+        // (plus the two legacy FileSystem constants). Without this they
+        // appear on both the global and the prototype, which no Chrome
+        // does. Inherited WorkerGlobalScope members are NOT flattened --
+        // see the flattening pass in js/Snapshot.zig.
+        pub const global_only_members = true;
         pub const prototype_chain = bridge.prototypeChain();
         pub var class_id: bridge.ClassId = undefined;
     };

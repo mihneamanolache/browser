@@ -8,6 +8,15 @@
   testing.expectEqual('object', typeof window.chrome);
   testing.expectEqual(true, 'app' in window.chrome);
   testing.expectEqual('[object Object]', Object.prototype.toString.call(window.chrome));
+  testing.expectEqual('undefined', typeof Chrome);
+  testing.expectEqual('undefined', typeof ChromeApp);
+  testing.expectEqual('undefined', typeof Console);
+
+  const descriptor = Object.getOwnPropertyDescriptor(window, 'chrome');
+  testing.expectEqual('object', typeof descriptor.value);
+  testing.expectEqual(true, descriptor.enumerable);
+  testing.expectEqual(true, descriptor.writable);
+  testing.expectEqual(false, descriptor.configurable);
 
   // A plain object: members are own properties, in this order.
   testing.expectEqual('loadTimes,csi,app', Object.keys(window.chrome).join(','));
@@ -15,6 +24,40 @@
   // Only ever present in an extension context. Stealth tooling that adds it
   // unconditionally is more detectable than tooling that omits it.
   testing.expectEqual('undefined', typeof chrome.runtime);
+</script>
+
+<script id=no_internal_interface_globals>
+  // These are implementation types used to wrap namespace objects, return
+  // dictionaries, iterators, and extension objects. Chrome does not install
+  // constructors for them on an ordinary Window global.
+  for (const name of [
+    'CSSStyleProperties',
+    'Chrome',
+    'ChromeApp',
+    'Console',
+    'CrossOriginWindow',
+    'Css',
+    'DeprecatedStorageQuota',
+    'ModelContext',
+    'ModelContextClient',
+    'ReadableStreamAsyncIterator',
+    'SVGGenericElement',
+    'StorageEstimate',
+    'WEBGL_debug_renderer_info',
+    'WEBGL_lose_context',
+  ]) {
+    testing.expectEqual(undefined, window[name]);
+  }
+
+  // Chrome exposes these through the EventTarget prototype, not as own
+  // properties of its Window global.
+  testing.expectEqual('function', typeof addEventListener);
+  testing.expectEqual(false, Object.hasOwn(window, 'addEventListener'));
+  testing.expectEqual(false, Object.hasOwn(window, 'removeEventListener'));
+  testing.expectEqual(false, Object.hasOwn(window, 'dispatchEvent'));
+
+  testing.expectEqual(false, crossOriginIsolated);
+  testing.expectEqual('undefined', typeof SharedArrayBuffer);
 </script>
 
 <script id=chrome_app>

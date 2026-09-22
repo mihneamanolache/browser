@@ -85,6 +85,14 @@ fn getAvailTop(_: *const Screen) i32 {
     return fingerprint.availTop();
 }
 
+fn getLeft(_: *const Screen) i32 {
+    return 0;
+}
+
+fn getTop(_: *const Screen) i32 {
+    return 0;
+}
+
 /// Whether a second display is attached. Part of the Window Management API
 /// and readable without permission.
 fn getIsExtended(_: *const Screen) bool {
@@ -131,6 +139,8 @@ pub const JsApi = struct {
     pub const availHeight = bridge.accessor(Screen.getAvailHeight, null, .{});
     pub const availLeft = bridge.accessor(Screen.getAvailLeft, null, .{});
     pub const availTop = bridge.accessor(Screen.getAvailTop, null, .{});
+    pub const left = bridge.accessor(Screen.getLeft, null, .{});
+    pub const top = bridge.accessor(Screen.getTop, null, .{});
     pub const isExtended = bridge.accessor(Screen.getIsExtended, null, .{});
     pub const onchange = bridge.accessor(Screen.getOnChange, Screen.setOnChange, .{});
     pub const colorDepth = bridge.accessor(Screen.getColorDepth, null, .{});

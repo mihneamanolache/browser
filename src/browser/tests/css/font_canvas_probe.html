@@ -1,0 +1,33 @@
+<!doctype html>
+<style>
+@font-face { font-family: "AuditWebfont"; src: url(font-fixture.woff2) format("woff2"); }
+</style>
+<pre id="result">pending</pre>
+<script>
+(async () => {
+  const faces = await document.fonts.load('20px AuditWebfont');
+  const canvas = document.createElement('canvas');
+  canvas.width = 96;
+  canvas.height = 36;
+  const ctx = canvas.getContext('2d');
+  ctx.font = '20px AuditWebfont';
+  const width = ctx.measureText('ABC').width;
+  ctx.fillText('ABC', 2, 26);
+  const pixels = ctx.getImageData(0, 0, 96, 36).data;
+  let alphaPixels = 0;
+  let alphaSum = 0;
+  let fnv = 2166136261;
+  for (let i = 0; i < pixels.length; i++) {
+    fnv = Math.imul(fnv ^ pixels[i], 16777619) >>> 0;
+    if ((i & 3) === 3) {
+      if (pixels[i]) alphaPixels++;
+      alphaSum += pixels[i];
+    }
+  }
+  document.getElementById('result').textContent = JSON.stringify({
+    faces: faces.length, status: faces[0]?.status, width, alphaPixels, alphaSum, fnv
+  });
+})().catch(error => {
+  document.getElementById('result').textContent = error.name + ': ' + error.message;
+});
+</script>

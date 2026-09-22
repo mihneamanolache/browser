@@ -6,6 +6,8 @@ const Frame = @import("../../../Frame.zig");
 const Node = @import("../../Node.zig");
 const Element = @import("../../Element.zig");
 const HtmlElement = @import("../Html.zig");
+const reflection = @import("../reflection.zig");
+const DOMException = @import("../../DOMException.zig");
 
 const log = lp.log;
 const String = lp.String;
@@ -17,6 +19,14 @@ pub const Proto = HtmlElement;
 _generation: u32 = 0,
 // Per spec, false only while a fetch is in flight.
 _complete: bool = true,
+// A failed current request renders Chrome's broken-image replacement box.
+// Keep this separate from `complete`: both successful and failed requests are
+// complete once their fetch settles.
+_broken: bool = false,
+_loaded: bool = false,
+_natural_width: u32 = 0,
+_natural_height: u32 = 0,
+_decode_resolvers: std.ArrayList(js.PromiseResolver.Global) = .empty,
 
 _proto_canary: if (lp.IS_DEBUG) *HtmlElement else void = undefined,
 
@@ -66,25 +76,89 @@ fn setLoading(self: *Image, value: []const u8, frame: *Frame) !void {
     try self.asElement().setAttributeSafe(comptime .wrap("loading"), .wrap(value), frame);
 }
 
-fn getNaturalWidth(_: *const Image) u32 {
-    // this is a valid response under a number of normal conditions, but could
-    // be used to detect the nature of Browser.
-    return 0;
+fn getNaturalWidth(self: *const Image) u32 {
+    return self._natural_width;
 }
 
-fn getNaturalHeight(_: *const Image) u32 {
-    // this is a valid response under a number of normal conditions, but could
-    // be used to detect the nature of Browser.
-    return 0;
+fn getNaturalHeight(self: *const Image) u32 {
+    return self._natural_height;
+}
+
+fn getDimension(self: *const Image, comptime name: []const u8) u32 {
+    if (self.asConstElement().getAttributeSafe(.wrap(name))) |value| {
+        const parsed = reflection.parseInteger(value) orelse return 0;
+        if (parsed < 0 or parsed > std.math.maxInt(i32)) return 0;
+        return @intCast(parsed);
+    }
+
+    // Blink paints a 16x16 replacement icon for a broken image without an
+    // author-supplied dimension. This is the rendered CSS-pixel size exposed
+    // by HTMLImageElement.width/height; naturalWidth/naturalHeight remain 0.
+    return if (self._broken and self.asConstElement().asConstNode().isConnected()) 16 else if (comptime std.mem.eql(u8, name, "width")) self._natural_width else self._natural_height;
+}
+
+fn setDimension(self: *Image, value: u32, comptime name: []const u8, frame: *Frame) !void {
+    const normalized = if (value <= std.math.maxInt(i32)) value else 0;
+    const str = try std.fmt.bufPrint(&frame.buf, "{d}", .{normalized});
+    try self.asElement().setAttributeSafe(.wrap(name), .wrap(str), frame);
+}
+
+fn getWidth(self: *const Image) u32 {
+    return self.getDimension("width");
+}
+
+fn setWidth(self: *Image, value: u32, frame: *Frame) !void {
+    return self.setDimension(value, "width", frame);
+}
+
+fn getHeight(self: *const Image) u32 {
+    return self.getDimension("height");
+}
+
+fn setHeight(self: *Image, value: u32, frame: *Frame) !void {
+    return self.setDimension(value, "height", frame);
 }
 
 fn getComplete(self: *const Image) bool {
     return self._complete;
 }
 
-/// Nothing is decoded here, so the image is always ready to insert.
-pub fn decode(_: *const Image, frame: *Frame) !js.Promise {
-    return frame.js.local.?.resolvePromise(js.Undefined{});
+pub fn decode(self: *Image, frame: *Frame) !js.Promise {
+    const local = frame.js.local.?;
+    if (self._loaded) return local.resolvePromise(js.Undefined{});
+    if (self._complete) return local.rejectPromise(.{ .dom_exception = .{ .err = error.EncodingError } });
+
+    const resolver = local.createPromiseResolver();
+    const global = try resolver.persist();
+    errdefer global.deinit();
+    try self._decode_resolvers.append(frame._factory.storageAllocator(), global);
+    return resolver.promise();
+}
+
+pub fn finishDecodes(self: *Image, frame: *Frame, success: bool) void {
+    var pending = self._decode_resolvers;
+    self._decode_resolvers = .empty;
+    defer pending.deinit(frame._factory.storageAllocator());
+    if (pending.items.len == 0) return;
+
+    var ls: js.Local.Scope = undefined;
+    frame.js.localScope(&ls);
+    defer ls.deinit();
+    for (pending.items) |resolver| {
+        defer resolver.deinit();
+        const local = ls.toLocal(resolver);
+        if (success) {
+            local.resolve("Image.decode", js.Undefined{});
+        } else {
+            local.reject("Image.decode", DOMException.init("The source image cannot be decoded.", "EncodingError"));
+        }
+    }
+}
+
+pub fn releaseDecodes(self: *Image, frame: *Frame) void {
+    for (self._decode_resolvers.items) |resolver| resolver.deinit();
+    self._decode_resolvers.deinit(frame._factory.storageAllocator());
+    self._decode_resolvers = .empty;
 }
 
 /// The one funnel for "this element's src became current": parser-created
@@ -103,7 +177,14 @@ fn imageAddedCallback(self: *Image, frame: *Frame) !void {
     }
 
     self._generation +%= 1;
+    const generation = self._generation;
     self._complete = true;
+    self._broken = false;
+    self._loaded = false;
+    self._natural_width = 0;
+    self._natural_height = 0;
+    self.finishDecodes(frame, false);
+    if (self._generation != generation) return;
 
     const element = self.asElement();
     // Exit if src not set.
@@ -117,6 +198,7 @@ fn imageAddedCallback(self: *Image, frame: *Frame) !void {
 
     Frame.resource_load.image(frame, self, src) catch |err| {
         log.warn(.http, "image fetch", .{ .err = err, .src = src });
+        self._broken = true;
         return frame.queueElementEvent(Factory.protoOf(self), .@"error");
     };
 }
@@ -135,8 +217,8 @@ pub const JsApi = struct {
     pub const src = bridge.accessor(Image.getSrc, Image.setSrc, .{ .ce_reactions = true });
     pub const currentSrc = bridge.accessor(Image.getSrc, null, .{});
     pub const alt = reflect.string("alt");
-    pub const width = reflect.unsignedLong("width", .{});
-    pub const height = reflect.unsignedLong("height", .{});
+    pub const width = bridge.accessor(Image.getWidth, Image.setWidth, .{ .ce_reactions = true });
+    pub const height = bridge.accessor(Image.getHeight, Image.setHeight, .{ .ce_reactions = true });
     pub const crossOrigin = reflect.enumerated("crossorigin", &.{ "anonymous", "use-credentials" }, .{ .missing = null, .nullable = true, .invalid = "anonymous" });
     pub const loading = bridge.accessor(Image.getLoading, Image.setLoading, .{ .ce_reactions = true });
     const reflect = Element.Reflect(Image);

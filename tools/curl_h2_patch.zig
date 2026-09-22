@@ -9,6 +9,12 @@
 //!   chrome  1:65536;2:0;4:6291456;6:262144 | 15663105 | 0 | m,a,s,p
 //!   curl    3:100;4:65536;2:0              |  1048510465 | 0 | m,s,a,p
 //!
+//! That fingerprint is necessary but not sufficient: it says nothing about
+//! the PRIORITY flag on the request HEADERS frame, which Chrome sets and
+//! curl does not. That one cannot be fixed here -- curl does build a
+//! priority spec, but this nghttp2 discards it ((void)pri_spec) -- so it
+//! lives in tools/nghttp2_chrome_patch.zig instead.
+//!
 //! None of it is reachable through libcurl's API: the SETTINGS list is built
 //! in C, the window size is a #define, and the pseudo-header order is the
 //! literal statement order of four function calls. So the sources are
@@ -90,6 +96,31 @@ const patches = [_]Patch{
         .why = "SETTINGS array must hold four entries",
         .find = "#define H2_SETTINGS_IV_LEN 3",
         .replace = "#define H2_SETTINGS_IV_LEN 4 /* lightpanda: Chrome sends four */",
+    },
+
+    // curl re-evaluates the per-transfer receive window immediately before
+    // submitting the first request. Its default (65536) differs from the
+    // Chrome-sized value installed above, so stock curl emits a second
+    // SETTINGS_INITIAL_WINDOW_SIZE frame after the Chrome-shaped preface.
+    // Keep the connection value stable: Chrome sends this setting once.
+    .{
+        .file = "http2.c",
+        .why = "suppress curl's post-preface window-size SETTINGS drift",
+        .find =
+        \\  initial_win_size = cf_h2_initial_win_size(data);
+        \\  if(initial_win_size != ctx->initial_win_size) {
+        \\    result = cf_h2_update_settings(ctx, initial_win_size);
+        \\    if(result)
+        \\      goto out;
+        \\  }
+        ,
+        .replace =
+        \\  /* lightpanda: the initial SETTINGS already advertises Chrome's
+        \\   * 6291456-byte stream window. Do not follow it with curl's
+        \\   * 65536-byte correction on the first request. */
+        \\  initial_win_size = ctx->initial_win_size;
+        \\  (void)initial_win_size;
+        ,
     },
 
     // 2. Initial connection WINDOW_UPDATE.

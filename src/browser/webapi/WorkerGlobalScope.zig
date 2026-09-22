@@ -50,6 +50,7 @@ const CookieStore = @import("storage/CookieStore.zig");
 const MessagePort = @import("MessagePort.zig");
 const SharedWorkerGlobalScope = @import("SharedWorkerGlobalScope.zig");
 const DedicatedWorkerGlobalScope = @import("DedicatedWorkerGlobalScope.zig");
+const ServiceWorkerGlobalScope = @import("ServiceWorkerGlobalScope.zig");
 
 const log = lp.log;
 const Allocator = std.mem.Allocator;
@@ -122,6 +123,7 @@ _scheduler: Scheduler = .{},
 pub const Type = union(enum) {
     shared: *SharedWorkerGlobalScope,
     dedicated: *DedicatedWorkerGlobalScope,
+    service: *ServiceWorkerGlobalScope,
 };
 
 pub fn init(
@@ -606,7 +608,10 @@ pub const JsApi = struct {
     }.wrap, null, .{});
     pub const self = bridge.accessor(WorkerGlobalScope.getSelf, WorkerGlobalScope.setSelf, .{});
     pub const location = bridge.accessor(WorkerGlobalScope.getLocation, null, .{});
-    pub const cookieStore = bridge.accessor(WorkerGlobalScope.getCookieStore, null, .{});
+    // No cookieStore: Chrome exposes the CookieStore API on Window and on
+    // ServiceWorkerGlobalScope, never on a dedicated or shared worker.
+    // Measured against Chrome for Testing 151, where `cookieStore` is
+    // absent from the whole worker prototype chain.
     pub const indexedDB = bridge.accessor(WorkerGlobalScope.getIndexedDB, null, .{});
 
     pub const onerror = bridge.accessor(WorkerGlobalScope.getOnError, WorkerGlobalScope.setOnError, .{});

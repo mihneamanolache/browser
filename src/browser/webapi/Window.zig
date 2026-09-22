@@ -20,6 +20,7 @@ const std = @import("std");
 const lp = @import("lightpanda");
 
 const js = @import("../js/js.zig");
+const event_handlers = @import("window_event_handlers.zig");
 const URL = @import("../URL.zig");
 const Frame = @import("../Frame.zig");
 const Console = @import("Console.zig");
@@ -59,7 +60,7 @@ const fingerprint = lp.fingerprint;
 const Execution = js.Execution;
 
 pub fn registerTypes() []const type {
-    return &.{ Window, CrossOriginWindow };
+    return &.{ Window, CrossOriginWindow, BarProp };
 }
 
 const Window = @This();
@@ -78,6 +79,12 @@ _model_context: ModelContext = .init,
 _screen: *Screen,
 _visual_viewport: *VisualViewport,
 _performance: *Performance,
+_location_bar: BarProp = .{},
+_menu_bar: BarProp = .{},
+_personal_bar: BarProp = .{},
+_scrollbars: BarProp = .{},
+_status_bar: BarProp = .{},
+_tool_bar: BarProp = .{},
 _cookie_store: ?*CookieStore = null,
 _idb_factory: ?*idb.IDBFactory = null,
 _on_load: ?js.Function.Global = null,
@@ -90,6 +97,12 @@ _on_focus: ?js.Function.Global = null,
 _on_resize: ?js.Function.Global = null,
 _on_scroll: ?js.Function.Global = null,
 _on_message: ?js.Function.Global = null,
+
+// Storage for the event-handler IDL attributes Chrome exposes that have no
+// dispatch path here yet. See tools/gen_window_event_handlers.zig: these
+// round-trip so the property enumerates like Chrome's, but nothing fires
+// them. The 13 handlers above this line are the ones that actually dispatch.
+_event_handlers: event_handlers.Store = event_handlers.empty,
 _on_rejection_handled: ?js.Function.Global = null,
 _on_unhandled_rejection: ?js.Function.Global = null,
 _reporting_error: bool = false,
@@ -142,6 +155,54 @@ fn setEvent(self: *Window, value: js.Value) void {
 
 fn getWindow(self: *Window) *Window {
     return self;
+}
+
+fn getLocationBar(self: *Window) *BarProp {
+    return &self._location_bar;
+}
+
+fn getMenuBar(self: *Window) *BarProp {
+    return &self._menu_bar;
+}
+
+fn getPersonalBar(self: *Window) *BarProp {
+    return &self._personal_bar;
+}
+
+fn getScrollbars(self: *Window) *BarProp {
+    return &self._scrollbars;
+}
+
+fn getStatusBar(self: *Window) *BarProp {
+    return &self._status_bar;
+}
+
+fn getToolBar(self: *Window) *BarProp {
+    return &self._tool_bar;
+}
+
+fn setLocationBar(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "locationbar");
+}
+
+fn setMenuBar(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "menubar");
+}
+
+fn setPersonalBar(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "personalbar");
+}
+
+fn setScrollbars(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "scrollbars");
+}
+
+fn setStatusBar(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "statusbar");
+}
+
+fn setToolBar(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "toolbar");
 }
 
 fn getOpener(self: *Window, frame: *Frame) ?Access {
@@ -258,6 +319,10 @@ fn getNavigator(self: *Window) *Navigator {
 
 fn getScheduler(self: *Window) *Scheduler {
     return &self._scheduler;
+}
+
+fn setScheduler(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "scheduler");
 }
 
 pub fn getModelContext(self: *Window) *ModelContext {
@@ -556,12 +621,12 @@ fn queueMicrotask(_: *Window, cb: js.Function, frame: *Frame) void {
     frame.js.queueMicrotaskFunc(cb);
 }
 
-fn clearTimeout(self: *Window, id: u32) void {
-    self._timers.clear(id);
+fn clearTimeout(self: *Window, id: ?u32) void {
+    if (id) |timer_id| self._timers.clear(timer_id);
 }
 
-fn clearInterval(self: *Window, id: u32) void {
-    self._timers.clear(id);
+fn clearInterval(self: *Window, id: ?u32) void {
+    if (id) |timer_id| self._timers.clear(timer_id);
 }
 
 fn clearImmediate(self: *Window, id: u32) void {
@@ -960,6 +1025,30 @@ fn getScreenY(_: *const Window) i32 {
     return 0;
 }
 
+fn setOuterWidth(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "outerWidth");
+}
+
+fn setOuterHeight(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "outerHeight");
+}
+
+fn setScreenX(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "screenX");
+}
+
+fn setScreenY(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "screenY");
+}
+
+fn setScreenLeft(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "screenLeft");
+}
+
+fn setScreenTop(self: *Window, value: js.Value) void {
+    self.replaceGlobalProperty(value, "screenTop");
+}
+
 /// Whether the document runs in a secure context. Chrome derives this from
 /// the origin — https and loopback yes, plain http no — so hardcoding either
 /// answer is itself a tell. `file:` and `about:` are trustworthy in Chrome
@@ -970,6 +1059,10 @@ fn getIsSecureContext(_: *const Window, frame: *Frame) bool {
         return true;
     }
     return URL.isPotentiallyTrustworthy(url);
+}
+
+fn getCrossOriginIsolated(_: *const Window) bool {
+    return false;
 }
 
 // Faux-layout viewport height, used to decide whether an element is already
@@ -1197,6 +1290,7 @@ pub const JsApi = struct {
 
     pub const Meta = struct {
         pub const name = "Window";
+        pub const global_only_members = true;
         pub const prototype_chain = bridge.prototypeChain();
         pub var class_id: bridge.ClassId = undefined;
     };
@@ -1204,12 +1298,12 @@ pub const JsApi = struct {
     pub const document = bridge.accessor(Window.getDocument, null, .{ .cache = .{ .internal = 1 }, .deletable = false });
     pub const console = bridge.accessor(Window.getConsole, Window.setConsole, .{});
 
-    pub const top = bridge.accessor(Window.getTop, null, .{});
+    pub const top = bridge.accessor(Window.getTop, null, .{ .deletable = false });
     pub const self = bridge.accessor(Window.getWindow, Window.setSelf, .{});
-    pub const window = bridge.accessor(Window.getWindow, null, .{});
+    pub const window = bridge.accessor(Window.getWindow, null, .{ .deletable = false });
     pub const parent = bridge.accessor(Window.getParent, Window.setParent, .{});
     pub const navigator = bridge.accessor(Window.getNavigator, null, .{});
-    pub const scheduler = bridge.accessor(Window.getScheduler, null, .{});
+    pub const scheduler = bridge.accessor(Window.getScheduler, Window.setScheduler, .{});
     pub const screen = bridge.accessor(Window.getScreen, Window.setScreen, .{});
     pub const visualViewport = bridge.accessor(Window.getVisualViewport, Window.setVisualViewport, .{});
     pub const performance = bridge.accessor(Window.getPerformance, Window.setPerformance, .{});
@@ -1223,6 +1317,12 @@ pub const JsApi = struct {
     pub const navigation = bridge.accessor(Window.getNavigation, Window.setNavigation, .{});
     pub const crypto = bridge.accessor(Window.getCrypto, null, .{});
     pub const CSS = bridge.accessor(Window.getCSS, null, .{});
+    pub const locationbar = bridge.accessor(Window.getLocationBar, Window.setLocationBar, .{});
+    pub const menubar = bridge.accessor(Window.getMenuBar, Window.setMenuBar, .{});
+    pub const personalbar = bridge.accessor(Window.getPersonalBar, Window.setPersonalBar, .{});
+    pub const scrollbars = bridge.accessor(Window.getScrollbars, Window.setScrollbars, .{});
+    pub const statusbar = bridge.accessor(Window.getStatusBar, Window.setStatusBar, .{});
+    pub const toolbar = bridge.accessor(Window.getToolBar, Window.setToolBar, .{});
 
     // Present on every Chrome page, extension or not. Its absence makes
     // `'app' in window.chrome` throw, which is louder than a false.
@@ -1241,6 +1341,122 @@ pub const JsApi = struct {
     pub const onmessage = bridge.accessor(Window.getOnMessage, Window.setOnMessage, .{});
     pub const onrejectionhandled = bridge.accessor(Window.getOnRejectionHandled, Window.setOnRejectionHandled, .{});
     pub const onunhandledrejection = bridge.accessor(Window.getOnUnhandledRejection, Window.setOnUnhandledRejection, .{});
+
+    // GENERATED by tools/gen_window_event_handlers.zig from a live Chrome
+    // census -- the 112 event-handler attributes Chrome has and we lacked.
+    // Inert: they store and return a callback, nothing dispatches to them.
+    pub const onabort = bridge.accessor(event_handlers.getter(.onabort), event_handlers.setter(.onabort), .{});
+    pub const onafterprint = bridge.accessor(event_handlers.getter(.onafterprint), event_handlers.setter(.onafterprint), .{});
+    pub const onanimationcancel = bridge.accessor(event_handlers.getter(.onanimationcancel), event_handlers.setter(.onanimationcancel), .{});
+    pub const onanimationend = bridge.accessor(event_handlers.getter(.onanimationend), event_handlers.setter(.onanimationend), .{});
+    pub const onanimationiteration = bridge.accessor(event_handlers.getter(.onanimationiteration), event_handlers.setter(.onanimationiteration), .{});
+    pub const onanimationstart = bridge.accessor(event_handlers.getter(.onanimationstart), event_handlers.setter(.onanimationstart), .{});
+    pub const onappinstalled = bridge.accessor(event_handlers.getter(.onappinstalled), event_handlers.setter(.onappinstalled), .{});
+    pub const onauxclick = bridge.accessor(event_handlers.getter(.onauxclick), event_handlers.setter(.onauxclick), .{});
+    pub const onbeforeinput = bridge.accessor(event_handlers.getter(.onbeforeinput), event_handlers.setter(.onbeforeinput), .{});
+    pub const onbeforeinstallprompt = bridge.accessor(event_handlers.getter(.onbeforeinstallprompt), event_handlers.setter(.onbeforeinstallprompt), .{});
+    pub const onbeforematch = bridge.accessor(event_handlers.getter(.onbeforematch), event_handlers.setter(.onbeforematch), .{});
+    pub const onbeforeprint = bridge.accessor(event_handlers.getter(.onbeforeprint), event_handlers.setter(.onbeforeprint), .{});
+    pub const onbeforetoggle = bridge.accessor(event_handlers.getter(.onbeforetoggle), event_handlers.setter(.onbeforetoggle), .{});
+    pub const onbeforeunload = bridge.accessor(event_handlers.getter(.onbeforeunload), event_handlers.setter(.onbeforeunload), .{});
+    pub const onbeforexrselect = bridge.accessor(event_handlers.getter(.onbeforexrselect), event_handlers.setter(.onbeforexrselect), .{});
+    pub const oncancel = bridge.accessor(event_handlers.getter(.oncancel), event_handlers.setter(.oncancel), .{});
+    pub const oncanplay = bridge.accessor(event_handlers.getter(.oncanplay), event_handlers.setter(.oncanplay), .{});
+    pub const oncanplaythrough = bridge.accessor(event_handlers.getter(.oncanplaythrough), event_handlers.setter(.oncanplaythrough), .{});
+    pub const onchange = bridge.accessor(event_handlers.getter(.onchange), event_handlers.setter(.onchange), .{});
+    pub const onclose = bridge.accessor(event_handlers.getter(.onclose), event_handlers.setter(.onclose), .{});
+    pub const oncommand = bridge.accessor(event_handlers.getter(.oncommand), event_handlers.setter(.oncommand), .{});
+    pub const oncontentvisibilityautostatechange = bridge.accessor(event_handlers.getter(.oncontentvisibilityautostatechange), event_handlers.setter(.oncontentvisibilityautostatechange), .{});
+    pub const oncontextlost = bridge.accessor(event_handlers.getter(.oncontextlost), event_handlers.setter(.oncontextlost), .{});
+    pub const oncontextmenu = bridge.accessor(event_handlers.getter(.oncontextmenu), event_handlers.setter(.oncontextmenu), .{});
+    pub const oncontextrestored = bridge.accessor(event_handlers.getter(.oncontextrestored), event_handlers.setter(.oncontextrestored), .{});
+    pub const oncuechange = bridge.accessor(event_handlers.getter(.oncuechange), event_handlers.setter(.oncuechange), .{});
+    pub const ondblclick = bridge.accessor(event_handlers.getter(.ondblclick), event_handlers.setter(.ondblclick), .{});
+    pub const ondevicemotion = bridge.accessor(event_handlers.getter(.ondevicemotion), event_handlers.setter(.ondevicemotion), .{});
+    pub const ondeviceorientation = bridge.accessor(event_handlers.getter(.ondeviceorientation), event_handlers.setter(.ondeviceorientation), .{});
+    pub const ondeviceorientationabsolute = bridge.accessor(event_handlers.getter(.ondeviceorientationabsolute), event_handlers.setter(.ondeviceorientationabsolute), .{});
+    pub const ondrag = bridge.accessor(event_handlers.getter(.ondrag), event_handlers.setter(.ondrag), .{});
+    pub const ondragend = bridge.accessor(event_handlers.getter(.ondragend), event_handlers.setter(.ondragend), .{});
+    pub const ondragenter = bridge.accessor(event_handlers.getter(.ondragenter), event_handlers.setter(.ondragenter), .{});
+    pub const ondragleave = bridge.accessor(event_handlers.getter(.ondragleave), event_handlers.setter(.ondragleave), .{});
+    pub const ondragover = bridge.accessor(event_handlers.getter(.ondragover), event_handlers.setter(.ondragover), .{});
+    pub const ondragstart = bridge.accessor(event_handlers.getter(.ondragstart), event_handlers.setter(.ondragstart), .{});
+    pub const ondrop = bridge.accessor(event_handlers.getter(.ondrop), event_handlers.setter(.ondrop), .{});
+    pub const ondurationchange = bridge.accessor(event_handlers.getter(.ondurationchange), event_handlers.setter(.ondurationchange), .{});
+    pub const onemptied = bridge.accessor(event_handlers.getter(.onemptied), event_handlers.setter(.onemptied), .{});
+    pub const onended = bridge.accessor(event_handlers.getter(.onended), event_handlers.setter(.onended), .{});
+    pub const onformdata = bridge.accessor(event_handlers.getter(.onformdata), event_handlers.setter(.onformdata), .{});
+    pub const ongamepadconnected = bridge.accessor(event_handlers.getter(.ongamepadconnected), event_handlers.setter(.ongamepadconnected), .{});
+    pub const ongamepaddisconnected = bridge.accessor(event_handlers.getter(.ongamepaddisconnected), event_handlers.setter(.ongamepaddisconnected), .{});
+    pub const ongotpointercapture = bridge.accessor(event_handlers.getter(.ongotpointercapture), event_handlers.setter(.ongotpointercapture), .{});
+    pub const oninput = bridge.accessor(event_handlers.getter(.oninput), event_handlers.setter(.oninput), .{});
+    pub const oninvalid = bridge.accessor(event_handlers.getter(.oninvalid), event_handlers.setter(.oninvalid), .{});
+    pub const onkeydown = bridge.accessor(event_handlers.getter(.onkeydown), event_handlers.setter(.onkeydown), .{});
+    pub const onkeypress = bridge.accessor(event_handlers.getter(.onkeypress), event_handlers.setter(.onkeypress), .{});
+    pub const onkeyup = bridge.accessor(event_handlers.getter(.onkeyup), event_handlers.setter(.onkeyup), .{});
+    pub const onlanguagechange = bridge.accessor(event_handlers.getter(.onlanguagechange), event_handlers.setter(.onlanguagechange), .{});
+    pub const onloadeddata = bridge.accessor(event_handlers.getter(.onloadeddata), event_handlers.setter(.onloadeddata), .{});
+    pub const onloadedmetadata = bridge.accessor(event_handlers.getter(.onloadedmetadata), event_handlers.setter(.onloadedmetadata), .{});
+    pub const onloadstart = bridge.accessor(event_handlers.getter(.onloadstart), event_handlers.setter(.onloadstart), .{});
+    pub const onlostpointercapture = bridge.accessor(event_handlers.getter(.onlostpointercapture), event_handlers.setter(.onlostpointercapture), .{});
+    pub const onmessageerror = bridge.accessor(event_handlers.getter(.onmessageerror), event_handlers.setter(.onmessageerror), .{});
+    pub const onmousedown = bridge.accessor(event_handlers.getter(.onmousedown), event_handlers.setter(.onmousedown), .{});
+    pub const onmouseenter = bridge.accessor(event_handlers.getter(.onmouseenter), event_handlers.setter(.onmouseenter), .{});
+    pub const onmouseleave = bridge.accessor(event_handlers.getter(.onmouseleave), event_handlers.setter(.onmouseleave), .{});
+    pub const onmousemove = bridge.accessor(event_handlers.getter(.onmousemove), event_handlers.setter(.onmousemove), .{});
+    pub const onmouseout = bridge.accessor(event_handlers.getter(.onmouseout), event_handlers.setter(.onmouseout), .{});
+    pub const onmouseover = bridge.accessor(event_handlers.getter(.onmouseover), event_handlers.setter(.onmouseover), .{});
+    pub const onmouseup = bridge.accessor(event_handlers.getter(.onmouseup), event_handlers.setter(.onmouseup), .{});
+    pub const onmousewheel = bridge.accessor(event_handlers.getter(.onmousewheel), event_handlers.setter(.onmousewheel), .{});
+    pub const onoffline = bridge.accessor(event_handlers.getter(.onoffline), event_handlers.setter(.onoffline), .{});
+    pub const ononline = bridge.accessor(event_handlers.getter(.ononline), event_handlers.setter(.ononline), .{});
+    pub const onpagehide = bridge.accessor(event_handlers.getter(.onpagehide), event_handlers.setter(.onpagehide), .{});
+    pub const onpagereveal = bridge.accessor(event_handlers.getter(.onpagereveal), event_handlers.setter(.onpagereveal), .{});
+    pub const onpageswap = bridge.accessor(event_handlers.getter(.onpageswap), event_handlers.setter(.onpageswap), .{});
+    pub const onpause = bridge.accessor(event_handlers.getter(.onpause), event_handlers.setter(.onpause), .{});
+    pub const onplay = bridge.accessor(event_handlers.getter(.onplay), event_handlers.setter(.onplay), .{});
+    pub const onplaying = bridge.accessor(event_handlers.getter(.onplaying), event_handlers.setter(.onplaying), .{});
+    pub const onpointercancel = bridge.accessor(event_handlers.getter(.onpointercancel), event_handlers.setter(.onpointercancel), .{});
+    pub const onpointerdown = bridge.accessor(event_handlers.getter(.onpointerdown), event_handlers.setter(.onpointerdown), .{});
+    pub const onpointerenter = bridge.accessor(event_handlers.getter(.onpointerenter), event_handlers.setter(.onpointerenter), .{});
+    pub const onpointerleave = bridge.accessor(event_handlers.getter(.onpointerleave), event_handlers.setter(.onpointerleave), .{});
+    pub const onpointermove = bridge.accessor(event_handlers.getter(.onpointermove), event_handlers.setter(.onpointermove), .{});
+    pub const onpointerout = bridge.accessor(event_handlers.getter(.onpointerout), event_handlers.setter(.onpointerout), .{});
+    pub const onpointerover = bridge.accessor(event_handlers.getter(.onpointerover), event_handlers.setter(.onpointerover), .{});
+    pub const onpointerrawupdate = bridge.accessor(event_handlers.getter(.onpointerrawupdate), event_handlers.setter(.onpointerrawupdate), .{});
+    pub const onpointerup = bridge.accessor(event_handlers.getter(.onpointerup), event_handlers.setter(.onpointerup), .{});
+    pub const onprogress = bridge.accessor(event_handlers.getter(.onprogress), event_handlers.setter(.onprogress), .{});
+    pub const onratechange = bridge.accessor(event_handlers.getter(.onratechange), event_handlers.setter(.onratechange), .{});
+    pub const onreset = bridge.accessor(event_handlers.getter(.onreset), event_handlers.setter(.onreset), .{});
+    pub const onscrollend = bridge.accessor(event_handlers.getter(.onscrollend), event_handlers.setter(.onscrollend), .{});
+    pub const onscrollsnapchange = bridge.accessor(event_handlers.getter(.onscrollsnapchange), event_handlers.setter(.onscrollsnapchange), .{});
+    pub const onscrollsnapchanging = bridge.accessor(event_handlers.getter(.onscrollsnapchanging), event_handlers.setter(.onscrollsnapchanging), .{});
+    pub const onsearch = bridge.accessor(event_handlers.getter(.onsearch), event_handlers.setter(.onsearch), .{});
+    pub const onsecuritypolicyviolation = bridge.accessor(event_handlers.getter(.onsecuritypolicyviolation), event_handlers.setter(.onsecuritypolicyviolation), .{});
+    pub const onseeked = bridge.accessor(event_handlers.getter(.onseeked), event_handlers.setter(.onseeked), .{});
+    pub const onseeking = bridge.accessor(event_handlers.getter(.onseeking), event_handlers.setter(.onseeking), .{});
+    pub const onselect = bridge.accessor(event_handlers.getter(.onselect), event_handlers.setter(.onselect), .{});
+    pub const onselectionchange = bridge.accessor(event_handlers.getter(.onselectionchange), event_handlers.setter(.onselectionchange), .{});
+    pub const onselectstart = bridge.accessor(event_handlers.getter(.onselectstart), event_handlers.setter(.onselectstart), .{});
+    pub const onslotchange = bridge.accessor(event_handlers.getter(.onslotchange), event_handlers.setter(.onslotchange), .{});
+    pub const onstalled = bridge.accessor(event_handlers.getter(.onstalled), event_handlers.setter(.onstalled), .{});
+    pub const onstorage = bridge.accessor(event_handlers.getter(.onstorage), event_handlers.setter(.onstorage), .{});
+    pub const onsubmit = bridge.accessor(event_handlers.getter(.onsubmit), event_handlers.setter(.onsubmit), .{});
+    pub const onsuspend = bridge.accessor(event_handlers.getter(.onsuspend), event_handlers.setter(.onsuspend), .{});
+    pub const ontimeupdate = bridge.accessor(event_handlers.getter(.ontimeupdate), event_handlers.setter(.ontimeupdate), .{});
+    pub const ontoggle = bridge.accessor(event_handlers.getter(.ontoggle), event_handlers.setter(.ontoggle), .{});
+    pub const ontransitioncancel = bridge.accessor(event_handlers.getter(.ontransitioncancel), event_handlers.setter(.ontransitioncancel), .{});
+    pub const ontransitionend = bridge.accessor(event_handlers.getter(.ontransitionend), event_handlers.setter(.ontransitionend), .{});
+    pub const ontransitionrun = bridge.accessor(event_handlers.getter(.ontransitionrun), event_handlers.setter(.ontransitionrun), .{});
+    pub const ontransitionstart = bridge.accessor(event_handlers.getter(.ontransitionstart), event_handlers.setter(.ontransitionstart), .{});
+    pub const onunload = bridge.accessor(event_handlers.getter(.onunload), event_handlers.setter(.onunload), .{});
+    pub const onvolumechange = bridge.accessor(event_handlers.getter(.onvolumechange), event_handlers.setter(.onvolumechange), .{});
+    pub const onwaiting = bridge.accessor(event_handlers.getter(.onwaiting), event_handlers.setter(.onwaiting), .{});
+    pub const onwebkitanimationend = bridge.accessor(event_handlers.getter(.onwebkitanimationend), event_handlers.setter(.onwebkitanimationend), .{});
+    pub const onwebkitanimationiteration = bridge.accessor(event_handlers.getter(.onwebkitanimationiteration), event_handlers.setter(.onwebkitanimationiteration), .{});
+    pub const onwebkitanimationstart = bridge.accessor(event_handlers.getter(.onwebkitanimationstart), event_handlers.setter(.onwebkitanimationstart), .{});
+    pub const onwebkittransitionend = bridge.accessor(event_handlers.getter(.onwebkittransitionend), event_handlers.setter(.onwebkittransitionend), .{});
+    pub const onwheel = bridge.accessor(event_handlers.getter(.onwheel), event_handlers.setter(.onwheel), .{});
     pub const event = bridge.accessor(Window.getEvent, Window.setEvent, .{ .null_as_undefined = true });
     pub const fetch = bridge.function(Window.fetch, .{});
     pub const queueMicrotask = bridge.function(Window.queueMicrotask, .{});
@@ -1248,8 +1464,6 @@ pub const JsApi = struct {
     pub const clearTimeout = bridge.function(Window.clearTimeout, .{});
     pub const setInterval = bridge.function(Window.setInterval, .{});
     pub const clearInterval = bridge.function(Window.clearInterval, .{});
-    pub const setImmediate = bridge.function(Window.setImmediate, .{});
-    pub const clearImmediate = bridge.function(Window.clearImmediate, .{});
     pub const requestAnimationFrame = bridge.function(Window.requestAnimationFrame, .{});
     pub const cancelAnimationFrame = bridge.function(Window.cancelAnimationFrame, .{});
     pub const requestIdleCallback = bridge.function(Window.requestIdleCallback, .{});
@@ -1271,16 +1485,18 @@ pub const JsApi = struct {
     pub const scrollY = bridge.accessor(Window.getScrollY, Window.setScrollY, .{});
     pub const pageXOffset = bridge.accessor(Window.getScrollX, Window.setPageXOffset, .{});
     pub const pageYOffset = bridge.accessor(Window.getScrollY, Window.setPageYOffset, .{});
-    pub const scrollTo = bridge.function(Window.scrollTo, .{});
-    pub const scroll = bridge.function(Window.scrollTo, .{});
-    pub const scrollBy = bridge.function(Window.scrollBy, .{});
+    pub const scrollTo = bridge.function(Window.scrollTo, .{ .arity = 0 });
+    pub const scroll = bridge.function(Window.scrollTo, .{ .arity = 0 });
+    pub const scrollBy = bridge.function(Window.scrollBy, .{ .arity = 0 });
 
     pub const isSecureContext = bridge.accessor(Window.getIsSecureContext, null, .{});
 
     // Cross-origin isolation needs COOP+COEP headers, which no ordinary page
-    // sends. Chrome reports false here for all but a handful of sites, and a
-    // page reads it to decide whether SharedArrayBuffer is usable.
-    pub const crossOriginIsolated = bridge.property(false, .{ .template = false });
+    // sends. This is a Window-global accessor in Chrome, not a property on
+    // Window.prototype.
+    pub const crossOriginIsolated = bridge.accessor(Window.getCrossOriginIsolated, null, .{});
+    pub const TEMPORARY = bridge.property(0, .{ .template = true });
+    pub const PERSISTENT = bridge.property(1, .{ .template = true });
 
     // [Replaceable] (CSSOM-View): the getter reads the page's runtime viewport
     // (overridable via Emulation.setDeviceMetricsOverride); the setter overwrites
@@ -1289,14 +1505,12 @@ pub const JsApi = struct {
     pub const innerHeight = bridge.accessor(Window.getInnerHeight, Window.setInnerHeight, .{});
     pub const devicePixelRatio = bridge.accessor(Window.getDevicePixelRatio, Window.setDevicePixelRatio, .{});
 
-    // [Replaceable] like innerWidth/innerHeight, but read-only in practice:
-    // nothing in-process resizes the window.
-    pub const outerWidth = bridge.accessor(Window.getOuterWidth, null, .{});
-    pub const outerHeight = bridge.accessor(Window.getOuterHeight, null, .{});
-    pub const screenX = bridge.accessor(Window.getScreenX, null, .{});
-    pub const screenY = bridge.accessor(Window.getScreenY, null, .{});
-    pub const screenLeft = bridge.accessor(Window.getScreenX, null, .{});
-    pub const screenTop = bridge.accessor(Window.getScreenY, null, .{});
+    pub const outerWidth = bridge.accessor(Window.getOuterWidth, Window.setOuterWidth, .{});
+    pub const outerHeight = bridge.accessor(Window.getOuterHeight, Window.setOuterHeight, .{});
+    pub const screenX = bridge.accessor(Window.getScreenX, Window.setScreenX, .{});
+    pub const screenY = bridge.accessor(Window.getScreenY, Window.setScreenY, .{});
+    pub const screenLeft = bridge.accessor(Window.getScreenX, Window.setScreenLeft, .{});
+    pub const screenTop = bridge.accessor(Window.getScreenY, Window.setScreenTop, .{});
 
     pub const opener = bridge.accessor(Window.getOpener, Window.setOpener, .{});
     pub const closed = bridge.accessor(Window.getClosed, null, .{});
@@ -1354,6 +1568,30 @@ pub const JsApi = struct {
     pub const webdriver = bridge.accessor(Window.getWebDriver, null, .{ .wpt_only = true });
 };
 
+pub const BarProp = struct {
+    _pad: bool = false,
+
+    fn getVisible(_: *const BarProp) bool {
+        return true;
+    }
+
+    fn constructor(exec: *const Execution) !*BarProp {
+        return exec.js.typeError("Illegal constructor");
+    }
+
+    pub const JsApi = struct {
+        pub const bridge = js.Bridge(BarProp);
+        pub const Meta = struct {
+            pub const name = "BarProp";
+            pub const prototype_chain = bridge.prototypeChain();
+            pub var class_id: bridge.ClassId = undefined;
+        };
+
+        pub const constructor = bridge.constructor(BarProp.constructor, .{});
+        pub const visible = bridge.accessor(BarProp.getVisible, null, .{});
+    };
+};
+
 const CrossOriginWindow = struct {
     window: *Window,
 
@@ -1402,6 +1640,7 @@ const CrossOriginWindow = struct {
 
         pub const Meta = struct {
             pub const name = "CrossOriginWindow";
+            pub const expose_global = false;
             pub const prototype_chain = bridge.prototypeChain();
             pub var class_id: bridge.ClassId = undefined;
         };

@@ -122,6 +122,7 @@ pub const JsApi = struct {
 
     pub const Meta = struct {
         pub const name = "Chrome";
+        pub const expose_global = false;
         // Not an interface: a page sees a bare object, so it must report as
         // one and carry its members as own properties.
         pub const class_string = "Object";
@@ -187,6 +188,7 @@ const App = struct {
 
         pub const Meta = struct {
             pub const name = "ChromeApp";
+            pub const expose_global = false;
             pub const class_string = "Object";
             pub const own_properties = true;
             pub const prototype_chain = bridge.prototypeChain();

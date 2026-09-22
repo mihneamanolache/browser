@@ -112,6 +112,14 @@ fn values(self: *PluginArray, frame: *Frame) !*PluginIterator {
     return .init(.{ ._array = self }, frame);
 }
 
+fn getIndexes(_: *PluginArray, frame: *Frame) !js.Array {
+    var arr = frame.js.local.?.newArray(fingerprint.plugins.len);
+    for (0..fingerprint.plugins.len) |i| {
+        _ = try arr.set(@intCast(i), i, .{});
+    }
+    return arr;
+}
+
 const PluginIterator = GenericIterator(struct {
     _array: *PluginArray,
     _index: usize = 0,
@@ -133,7 +141,7 @@ pub const JsApi = struct {
 
     pub const length = bridge.property(fingerprint.plugins.len, .{ .template = false });
     pub const refresh = bridge.function(PluginArray.refresh, .{});
-    pub const @"[int]" = bridge.indexed(PluginArray.getAtIndex, null, .{ .null_as_undefined = true });
+    pub const @"[int]" = bridge.indexed(PluginArray.getAtIndex, PluginArray.getIndexes, .{ .null_as_undefined = true });
     pub const @"[str]" = bridge.namedIndexed(PluginArray.getByName, null, null, null, struct {
         // [LegacyUnenumerableNamedProperties]: the names resolve but never
         // show up in Object.keys / for-in, matching Chrome.
@@ -194,6 +202,14 @@ pub const Plugin = struct {
         return self._owner.getMimeTypes().values(frame);
     }
 
+    fn getIndexes(_: *Plugin, frame: *Frame) !js.Array {
+        var arr = frame.js.local.?.newArray(fingerprint.mime_types.len);
+        for (0..fingerprint.mime_types.len) |i| {
+            _ = try arr.set(@intCast(i), i, .{});
+        }
+        return arr;
+    }
+
     pub const JsApi = struct {
         pub const bridge = js.Bridge(Plugin);
 
@@ -208,7 +224,7 @@ pub const Plugin = struct {
         pub const description = bridge.accessor(Plugin.getDescription, null, .{});
         pub const length = bridge.property(fingerprint.mime_types.len, .{ .template = false });
 
-        pub const @"[int]" = bridge.indexed(Plugin.getAtIndex, null, .{ .null_as_undefined = true });
+        pub const @"[int]" = bridge.indexed(Plugin.getAtIndex, Plugin.getIndexes, .{ .null_as_undefined = true });
         pub const @"[str]" = bridge.namedIndexed(Plugin.getByName, null, null, null, struct {
             fn wrap(self: *Plugin, mime: []const u8) !u32 {
                 if (self.getByName(mime) != null) {
@@ -257,6 +273,14 @@ pub const MimeTypeArray = struct {
         return .init(.{ ._array = self }, frame);
     }
 
+    fn getIndexes(_: *MimeTypeArray, frame: *Frame) !js.Array {
+        var arr = frame.js.local.?.newArray(fingerprint.mime_types.len);
+        for (0..fingerprint.mime_types.len) |i| {
+            _ = try arr.set(@intCast(i), i, .{});
+        }
+        return arr;
+    }
+
     pub const JsApi = struct {
         pub const bridge = js.Bridge(MimeTypeArray);
 
@@ -267,7 +291,7 @@ pub const MimeTypeArray = struct {
         };
 
         pub const length = bridge.property(fingerprint.mime_types.len, .{ .template = false });
-        pub const @"[int]" = bridge.indexed(MimeTypeArray.getAtIndex, null, .{ .null_as_undefined = true });
+        pub const @"[int]" = bridge.indexed(MimeTypeArray.getAtIndex, MimeTypeArray.getIndexes, .{ .null_as_undefined = true });
         pub const @"[str]" = bridge.namedIndexed(MimeTypeArray.getByName, null, null, null, struct {
             fn wrap(self: *MimeTypeArray, name: []const u8) !u32 {
                 if (self.getByName(name) != null) {

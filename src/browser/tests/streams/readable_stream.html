@@ -1,5 +1,18 @@
 <!DOCTYPE html>
 <script src="../testing.js"></script>
+
+<script id=reader_writer_constructors>
+  testing.expectEqual(1, ReadableStreamDefaultReader.length);
+  testing.expectEqual(1, WritableStreamDefaultWriter.length);
+  const readable = new ReadableStream();
+  const reader = new ReadableStreamDefaultReader(readable);
+  testing.expectEqual(true, reader instanceof ReadableStreamDefaultReader);
+  reader.releaseLock();
+  const writable = new WritableStream();
+  const writer = new WritableStreamDefaultWriter(writable);
+  testing.expectEqual(true, writer instanceof WritableStreamDefaultWriter);
+  writer.releaseLock();
+</script>
 <script id=readable_stream_basic>
   {
     // Test basic stream creation

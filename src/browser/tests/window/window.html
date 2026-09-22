@@ -358,7 +358,7 @@
   // Test that extracting a cached property getter and calling it with wrong `this`
   // doesn't crash (V8 internal field out of bounds). V8's Signature validation
   // should throw "Illegal invocation" for wrong receiver types.
-  const documentGetter = Object.getOwnPropertyDescriptor(Window.prototype, 'document').get;
+  const documentGetter = Object.getOwnPropertyDescriptor(window, 'document').get;
 
   // Verify we get an error with wrong this values
   let errorCount = 0;
@@ -416,16 +416,16 @@
 </script>
 
 <script id=global_flattening_own_props>
-  // WebIDL [Global] flattening: members of the Window interface (and the
-  // interfaces it inherits, e.g. EventTarget) must be OWN properties of the
-  // global object, not merely inherited via the prototype chain. Otherwise a
+  // WebIDL [Global] flattening: members of the Window interface are OWN
+  // properties of the global object. Inherited EventTarget methods remain on
+  // the prototype chain in Chrome. Otherwise a
   // top-level `var navigator = ...` shadows the inherited accessor with an own
   // `undefined` (CreateGlobalVarBinding only skips when the name is already own).
   const hop = Object.prototype.hasOwnProperty;
   testing.expectEqual(true, hop.call(globalThis, 'navigator'));   // Window attribute
   testing.expectEqual(true, hop.call(globalThis, 'document'));    // Window attribute
   testing.expectEqual(true, hop.call(globalThis, 'location'));    // Window attribute
-  testing.expectEqual(true, hop.call(globalThis, 'addEventListener')); // inherited EventTarget method
+  testing.expectEqual(false, hop.call(globalThis, 'addEventListener')); // inherited EventTarget method
 
   // They still work when invoked on the global.
   testing.expectEqual(document, globalThis.document);
@@ -442,4 +442,45 @@
   testing.expectEqual(true, navigator === window.navigator);
   testing.expectEqual(true, typeof navigator.userAgent === 'string');
   testing.expectEqual(true, navigator.userAgent.length > 0);
+</script>
+
+<script id=bar_properties>
+  for (const name of ['locationbar', 'menubar', 'personalbar', 'scrollbars', 'statusbar', 'toolbar']) {
+    const bar = window[name];
+    testing.expectEqual('[object BarProp]', Object.prototype.toString.call(bar));
+    testing.expectEqual('BarProp', bar.constructor.name);
+    testing.expectEqual(true, bar.visible);
+    testing.expectEqual(true, bar === window[name]);
+    const descriptor = Object.getOwnPropertyDescriptor(window, name);
+    testing.expectEqual(true, typeof descriptor.get === 'function');
+    testing.expectEqual(true, typeof descriptor.set === 'function');
+  }
+  testing.expectEqual(false, locationbar === menubar);
+  testing.expectEqual('visible,constructor', Object.getOwnPropertyNames(BarProp.prototype).join(','));
+  testing.expectError('TypeError', () => new BarProp());
+</script>
+
+<script id=chrome_global_descriptors>
+  testing.expectEqual('PERSISTENT,TEMPORARY,constructor', Object.getOwnPropertyNames(Window.prototype).sort().join(','));
+  testing.expectEqual(0, Window.prototype.TEMPORARY);
+  testing.expectEqual(1, Window.prototype.PERSISTENT);
+  const consoleDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'console');
+  testing.expectEqual(true, consoleDescriptor.configurable);
+  testing.expectEqual(false, consoleDescriptor.enumerable);
+  testing.expectEqual(true, consoleDescriptor.writable);
+  testing.expectEqual(console, consoleDescriptor.value);
+  for (const name of ['top', 'window']) {
+    testing.expectEqual(false, Object.getOwnPropertyDescriptor(globalThis, name).configurable);
+  }
+  for (const name of ['outerWidth', 'outerHeight', 'screenX', 'screenY', 'screenLeft', 'screenTop', 'scheduler']) {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+    testing.expectEqual(true, typeof descriptor.get === 'function');
+    testing.expectEqual(true, typeof descriptor.set === 'function');
+  }
+  for (const name of ['scroll', 'scrollBy', 'scrollTo']) {
+    testing.expectEqual(0, globalThis[name].length);
+  }
+  for (const name of ['Audio', 'HTMLAudioElement', 'Image', 'HTMLImageElement']) {
+    testing.expectEqual(false, Object.getOwnPropertyDescriptor(globalThis, name).enumerable);
+  }
 </script>

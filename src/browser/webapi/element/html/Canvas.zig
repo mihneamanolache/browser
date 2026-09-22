@@ -28,7 +28,11 @@ const Element = @import("../../Element.zig");
 
 const OffscreenCanvas = @import("../../canvas/OffscreenCanvas.zig");
 const WebGLRenderingContext = @import("../../canvas/WebGLRenderingContext.zig");
+const WebGL2RenderingContext = WebGLRenderingContext.WebGL2RenderingContext;
 const CanvasRenderingContext2D = @import("../../canvas/CanvasRenderingContext2D.zig");
+const context2d = @import("../../canvas/context2d.zig");
+const Bitmap = @import("../../canvas/Bitmap.zig");
+const FileReader = @import("../../FileReader.zig");
 
 const HtmlElement = @import("../Html.zig");
 
@@ -68,36 +72,72 @@ pub fn getHeight(self: *const Canvas) u32 {
 const DrawingContext = union(enum) {
     @"2d": *CanvasRenderingContext2D,
     webgl: *WebGLRenderingContext,
+    webgl2: *WebGL2RenderingContext,
 };
 
-fn getContext(self: *Canvas, context_type: []const u8, frame: *Frame) !?DrawingContext {
+fn getContext(self: *Canvas, context_type: []const u8, options: ?context2d.ContextOptions, frame: *Frame) !?DrawingContext {
     if (self._cached) |cached| {
         const matches = switch (cached) {
             .@"2d" => std.mem.eql(u8, context_type, "2d"),
             .webgl => std.mem.eql(u8, context_type, "webgl") or std.mem.eql(u8, context_type, "experimental-webgl"),
+            .webgl2 => std.mem.eql(u8, context_type, "webgl2"),
         };
         return if (matches) cached else null;
     }
 
     const drawing_context: DrawingContext = blk: {
         if (std.mem.eql(u8, context_type, "2d")) {
-            const ctx = try frame._factory.create(CanvasRenderingContext2D{ ._canvas = self });
+            const ctx = try frame._factory.create(CanvasRenderingContext2D{
+                ._canvas = self,
+                ._software_raster = if (options) |o| o.willReadFrequently else false,
+                ._context_options = options orelse .{},
+                ._bitmap = .{
+                    ._opaque = if (options) |o| !o.alpha else false,
+                    ._preserve_raw_put = if (options) |o| !o.alpha else false,
+                },
+            });
             break :blk .{ .@"2d" = ctx };
         }
 
         // The whole WebGL 1.0 surface is implemented (see
         // WebGLRenderingContext), so a consumer like Three.js runs its setup
         // path to completion instead of throwing on the first call we never
-        // stubbed. Nothing is drawn — but returning null here would be a
-        // louder signal than drawing nothing, since a desktop Chrome that
+        // stubbed. Shader draws still need a backend — but returning null
+        // here would be a louder signal, since a desktop Chrome that
         // cannot do WebGL is close to unheard of.
         if (std.mem.eql(u8, context_type, "webgl") or std.mem.eql(u8, context_type, "experimental-webgl")) {
-            const ctx = try frame._factory.create(WebGLRenderingContext{ ._canvas = self });
+            const ctx = try frame._factory.create(WebGLRenderingContext{
+                ._canvas = self,
+                ._offscreen_canvas = null,
+                ._drawing_buffer_width = self.getWidth(),
+                ._drawing_buffer_height = self.getHeight(),
+                ._attributes = .{
+                    .alpha = if (options) |o| o.alpha else true,
+                    .premultipliedAlpha = if (options) |o| o.premultipliedAlpha else true,
+                },
+            });
             break :blk .{ .webgl = ctx };
         }
 
-        // webgl2 and webgpu are genuinely absent, and a page that asks for
-        // one already has to handle null.
+        if (std.mem.eql(u8, context_type, "webgl2")) {
+            const ctx = try frame._factory.chained(.{
+                WebGLRenderingContext{
+                    ._canvas = self,
+                    ._offscreen_canvas = null,
+                    ._drawing_buffer_width = self.getWidth(),
+                    ._drawing_buffer_height = self.getHeight(),
+                    ._version = .webgl2,
+                    ._attributes = .{
+                        .alpha = if (options) |o| o.alpha else true,
+                        .premultipliedAlpha = if (options) |o| o.premultipliedAlpha else true,
+                    },
+                },
+                WebGL2RenderingContext{ ._proto = undefined },
+            });
+            break :blk .{ .webgl2 = ctx };
+        }
+
+        // WebGPU remains genuinely absent.
         return null;
     };
     self._cached = drawing_context;
@@ -108,21 +148,71 @@ fn hasBitmap(self: *const Canvas) bool {
     return BlankPNG.hasBitmap(self.getWidth(), self.getHeight());
 }
 
-/// Serializes the canvas, always as the blank PNG. Per spec an unsupported
-/// `type` falls back to image/png, and with nothing drawn there is no lossy
-/// encoding for `quality` to control, so both arguments are ignored.
-fn toDataURL(self: *const Canvas, _: ?[]const u8, _: ?f64) []const u8 {
-    // Per spec, a canvas with no pixels serializes to this exact string.
-    return if (self.hasBitmap()) BlankPNG.data_url else "data:,";
+fn resetBitmap(self: *Canvas) void {
+    const cached = self._cached orelse return;
+    switch (cached) {
+        .@"2d" => |ctx| {
+            ctx._bitmap.reset();
+            ctx._state = .{};
+            ctx._state_stack.clearRetainingCapacity();
+        },
+        .webgl => |ctx| {
+            ctx._drawing_buffer_width = self.getWidth();
+            ctx._drawing_buffer_height = self.getHeight();
+            ctx.resetDrawingBuffer();
+        },
+        .webgl2 => |ctx| {
+            ctx._proto._drawing_buffer_width = self.getWidth();
+            ctx._proto._drawing_buffer_height = self.getHeight();
+            ctx._proto.resetDrawingBuffer();
+        },
+    }
+}
+
+pub const Build = struct {
+    pub fn attributeChange(element: *Element, name: lp.String, _: lp.String, _: *Frame) !void {
+        if (name.eql(comptime .wrap("width")) or name.eql(comptime .wrap("height"))) {
+            element.as(Canvas).resetBitmap();
+        }
+    }
+
+    pub fn attributeRemove(element: *Element, name: lp.String, _: *Frame) !void {
+        if (name.eql(comptime .wrap("width")) or name.eql(comptime .wrap("height"))) {
+            element.as(Canvas).resetBitmap();
+        }
+    }
+};
+
+fn pngBytes(self: *Canvas, output_arena: std.mem.Allocator, exec: *Execution) !?[]const u8 {
+    if (!self.hasBitmap()) return null;
+    const width = self.getWidth();
+    const height = self.getHeight();
+    if (self._cached) |cached| {
+        switch (cached) {
+            .@"2d" => |ctx| return try ctx._bitmap.png(width, height, exec.arena, output_arena),
+            .webgl => |ctx| return try ctx.png(output_arena, exec),
+            .webgl2 => |ctx| return try ctx._proto.png(output_arena, exec),
+        }
+    }
+    var blank: Bitmap = .{};
+    return try blank.png(width, height, output_arena, output_arena);
+}
+
+/// Unsupported MIME types fall back to PNG. Encoding comes from the current
+/// bitmap dimensions and pixels rather than a fixed transparent 1x1 image.
+fn toDataURL(self: *Canvas, _: ?[]const u8, _: ?f64, exec: *Execution) ![]const u8 {
+    const bytes = try self.pngBytes(exec.local_arena, exec) orelse return "data:,";
+    return FileReader.encodeDataURL(exec.local_arena, "image/png", bytes);
 }
 
 /// Same image as `toDataURL`, handed to `callback` as a Blob from a task.
 /// A canvas with no pixels calls back with null, per spec.
-pub fn toBlob(self: *const Canvas, callback: js.Function.Global, _: ?[]const u8, _: ?f64, exec: *Execution) !void {
+pub fn toBlob(self: *Canvas, callback: js.Function.Global, _: ?[]const u8, _: ?f64, exec: *Execution) !void {
+    const bytes = try self.pngBytes(exec.arena, exec);
     const task = try exec._factory.create(ToBlobCallback{
         .exec = exec,
-        // The spec checks the bitmap now, not when the task runs.
-        .has_bitmap = self.hasBitmap(),
+        // Snapshot the encoded bitmap before the asynchronous callback.
+        .png_bytes = bytes,
         .callback = callback,
     });
     errdefer exec._factory.destroy(task);
@@ -135,7 +225,7 @@ pub fn toBlob(self: *const Canvas, callback: js.Function.Global, _: ?[]const u8,
 
 const ToBlobCallback = struct {
     exec: *Execution,
-    has_bitmap: bool,
+    png_bytes: ?[]const u8,
     callback: js.Function.Global,
 
     fn cancelled(ctx: *anyopaque) void {
@@ -154,8 +244,8 @@ const ToBlobCallback = struct {
         const exec = self.exec;
 
         var blob: ?*Blob = null;
-        if (self.has_bitmap) {
-            const b = try BlankPNG.blob(exec);
+        if (self.png_bytes) |bytes| {
+            const b = try Blob.initFromBytes(bytes, "image/png", exec);
             // The page can hold on to the Blob, in which case the JS wrapper
             // takes its own ref; ours only has to cover the call.
             b.acquireRef();

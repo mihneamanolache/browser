@@ -142,6 +142,13 @@ pub fn sendFile(req: *std.http.Server.Request, file_path: []const u8) !void {
 }
 
 fn getContentType(file_path: []const u8) []const u8 {
+    if (std.mem.endsWith(u8, file_path, ".ttf")) {
+        return "font/ttf";
+    }
+    if (std.mem.endsWith(u8, file_path, ".woff2")) {
+        return "font/woff2";
+    }
+
     if (std.mem.endsWith(u8, file_path, ".js")) {
         return "application/json";
     }

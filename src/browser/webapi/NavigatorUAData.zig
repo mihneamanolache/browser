@@ -73,7 +73,7 @@ fn getHighEntropyValues(_: *const NavigatorUAData, hints: []const []const u8, ex
         .uaFullVersion = fingerprint.chrome_full_version,
         .fullVersionList = brandList(.full_version),
         .wow64 = fingerprint.wow64,
-        .formFactor = fingerprint.form_factors,
+        .formFactors = fingerprint.form_factors,
     });
 }
 

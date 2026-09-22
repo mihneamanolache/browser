@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <script src="../testing.js"></script>
 
+<script id=constructor_length>
+  testing.expectEqual(1, WebSocket.length);
+</script>
+
 <script id=basic_echo type=module>
 {
   const state = await testing.async();

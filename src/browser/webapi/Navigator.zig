@@ -553,7 +553,10 @@ fn getSerial(self: *Navigator, frame: *Frame) !*napi.Serial {
 
 fn getServiceWorker(self: *Navigator, frame: *Frame) !*napi.ServiceWorkerContainer {
     if (self._serviceWorker) |p| return p;
-    const p = try frame._factory.create(napi.ServiceWorkerContainer{});
+    const p = try frame._factory.eventTarget(napi.ServiceWorkerContainer{
+        ._proto = undefined,
+        ._frame = frame,
+    });
     self._serviceWorker = p;
     return p;
 }

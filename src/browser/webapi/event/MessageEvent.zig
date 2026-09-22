@@ -42,6 +42,7 @@ _ports: []const *MessagePort = &.{},
 pub const Source = union(enum) {
     window: *Window,
     port: *MessagePort,
+    value: js.Value.Global,
 };
 
 const MessageEventOptions = struct {
@@ -102,6 +103,10 @@ pub fn deinit(self: *MessageEvent, page: *Page) void {
             .string, .arraybuffer => {},
         }
     }
+    if (self._source) |source| switch (source) {
+        .value => |value| value.release(),
+        .window, .port => {},
+    };
     self._proto.deinit(page);
 }
 
@@ -132,12 +137,14 @@ fn getLastEventId(self: *const MessageEvent) []const u8 {
 const SourceAccess = union(enum) {
     window: Window.Access,
     port: *MessagePort,
+    value: js.Value.Global,
 };
 
 fn getSource(self: *const MessageEvent, exec: *js.Execution) ?SourceAccess {
     const source = self._source orelse return null;
     switch (source) {
         .port => |port| return .{ .port = port },
+        .value => |value| return .{ .value = value },
         .window => |window| switch (exec.js.global) {
             .frame => |frame| return .{ .window = Window.Access.init(frame.window, window) },
             .worker => {

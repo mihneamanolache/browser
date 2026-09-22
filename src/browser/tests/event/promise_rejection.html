@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <script src="../testing.js"></script>
 
+<script id=constructor_length>
+  testing.expectEqual(2, PromiseRejectionEvent.length);
+</script>
+
 <script id=project_rejection>
   {
     let e1 = new PromiseRejectionEvent("rejectionhandled");

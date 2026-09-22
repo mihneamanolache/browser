@@ -239,6 +239,7 @@ pub const CurlHttpVersion = enum(c_long) {
     v1_1 = c.CURL_HTTP_VERSION_1_1,
     v2 = c.CURL_HTTP_VERSION_2_0,
     v3 = c.CURL_HTTP_VERSION_3,
+    v3_only = c.CURL_HTTP_VERSION_3ONLY,
     _,
 };
 

@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <script src="../testing.js"></script>
 
+<script id=task_priority_change_event_length>
+  testing.expectEqual(2, TaskPriorityChangeEvent.length);
+</script>
+
 <script id=schedulerSurface>
 {
   testing.expectEqual('function', typeof scheduler.postTask);

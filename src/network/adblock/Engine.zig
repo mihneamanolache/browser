@@ -147,6 +147,7 @@ pub const Request = struct {
             .stylesheet => .{ .stylesheet = true },
             .xhr, .fetch => .{ .xmlhttprequest = true },
             .image => .{ .image = true },
+            .font => .{ .font = true },
             .eventsource, .ping => .{ .other = true },
             .worker => .{ .script = true },
         };

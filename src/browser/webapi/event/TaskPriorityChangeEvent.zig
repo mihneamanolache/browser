@@ -87,6 +87,6 @@ pub const JsApi = struct {
         pub var class_id: bridge.ClassId = undefined;
     };
 
-    pub const constructor = bridge.constructor(TaskPriorityChangeEvent.init, .{});
+    pub const constructor = bridge.constructor(TaskPriorityChangeEvent.init, .{ .arity = 2 });
     pub const previousPriority = bridge.accessor(TaskPriorityChangeEvent.getPreviousPriority, null, .{});
 };

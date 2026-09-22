@@ -98,7 +98,7 @@ pub const JsApi = struct {
         pub var class_id: bridge.ClassId = undefined;
     };
 
-    pub const constructor = bridge.constructor(PromiseRejectionEvent.init, .{});
+    pub const constructor = bridge.constructor(PromiseRejectionEvent.init, .{ .arity = 2 });
     pub const reason = bridge.accessor(PromiseRejectionEvent.getReason, null, .{});
     pub const promise = bridge.accessor(PromiseRejectionEvent.getPromise, null, .{});
 };

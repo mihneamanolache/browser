@@ -58,13 +58,64 @@
 }
 </script>
 
+<script id=WebGL2RenderingContext#fingerprint_surface>
+{
+  const element = document.createElement('canvas');
+  const ctx = element.getContext('webgl2');
+  testing.expectEqual(true, ctx instanceof WebGL2RenderingContext);
+  testing.expectEqual(true, ctx instanceof WebGLRenderingContext);
+  testing.expectEqual(true, ctx === element.getContext('webgl2'));
+  testing.expectEqual(null, element.getContext('webgl'));
+  testing.expectEqual('WebGL 2.0 (OpenGL ES 3.0 Chromium)', ctx.getParameter(ctx.VERSION));
+  testing.expectEqual('WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)', ctx.getParameter(ctx.SHADING_LANGUAGE_VERSION));
+  testing.expectEqual('srgb', ctx.drawingBufferColorSpace);
+  testing.expectEqual('srgb', ctx.unpackColorSpace);
+  testing.expectEqual(0x8DF0, ctx.LOW_FLOAT);
+  testing.expectEqual(0x8DF2, ctx.HIGH_FLOAT);
+  testing.expectEqual(0x8DF5, ctx.HIGH_INT);
+  testing.expectEqual(4096, ctx.getParameter(ctx.MAX_VERTEX_UNIFORM_COMPONENTS));
+  testing.expectEqual(16384, ctx.getParameter(ctx.MAX_UNIFORM_BLOCK_SIZE));
+  testing.expectEqual(256, ctx.getParameter(ctx.UNIFORM_BUFFER_OFFSET_ALIGNMENT));
+}
+</script>
+
+<script id=WebGL2RenderingContext#own_webgl1_surface>
+{
+  // Headful Chrome installs WebGL1's constants and operations as own
+  // properties of WebGL2RenderingContext.prototype, not just inherited ones.
+  const gl1 = WebGLRenderingContext.prototype;
+  const gl2 = WebGL2RenderingContext.prototype;
+  for (const name of Object.getOwnPropertyNames(gl1)) {
+    if (name === 'constructor') continue;
+    const first = Object.getOwnPropertyDescriptor(gl1, name);
+    const second = Object.getOwnPropertyDescriptor(gl2, name);
+    testing.expectEqual(true, !!second);
+    testing.expectEqual(first.configurable, second.configurable);
+    testing.expectEqual(first.enumerable, second.enumerable);
+    if ('value' in first) {
+      testing.expectEqual(first.writable, second.writable);
+      testing.expectEqual(typeof first.value, typeof second.value);
+      if (typeof first.value === 'function') {
+        testing.expectEqual(first.value.length, second.value.length);
+      } else {
+        testing.expectEqual(first.value, second.value);
+      }
+    } else {
+      testing.expectEqual(!!first.get, !!second.get);
+      testing.expectEqual(!!first.set, !!second.set);
+    }
+  }
+}
+</script>
+
 <script id=WebGLRenderingCanvas#getExtension>
 // WEBGL_debug_renderer_info
 {
   const element = document.createElement("canvas");
   const ctx = element.getContext("webgl");
   const rendererInfo = ctx.getExtension("WEBGL_debug_renderer_info");
-  testing.expectEqual(true, rendererInfo instanceof WEBGL_debug_renderer_info);
+  testing.expectEqual('undefined', typeof WEBGL_debug_renderer_info);
+  testing.expectEqual('object', typeof rendererInfo);
 
   const { UNMASKED_VENDOR_WEBGL, UNMASKED_RENDERER_WEBGL } = rendererInfo;
   testing.expectEqual(UNMASKED_VENDOR_WEBGL, 0x9245);
@@ -83,7 +134,8 @@
   const element = document.createElement("canvas");
   const ctx = element.getContext("webgl");
   const loseContext = ctx.getExtension("WEBGL_lose_context");
-  testing.expectEqual(true, loseContext instanceof WEBGL_lose_context);
+  testing.expectEqual('undefined', typeof WEBGL_lose_context);
+  testing.expectEqual('object', typeof loseContext);
 
   loseContext.loseContext();
   loseContext.restoreContext();
@@ -143,20 +195,25 @@
 <script id=renderer_setup_path_completes>
 {
   // The reason getContext no longer returns null: a renderer has to be able
-  // to run its whole setup path without throwing. Nothing draws; nothing
-  // raises either.
+  // to run its whole setup path without throwing. Shader draws remain no-ops;
+  // default-buffer clear and readback work.
   const ctx = document.createElement('canvas').getContext('webgl');
 
   const vs = ctx.createShader(0x8B31); // VERTEX_SHADER
   const fs = ctx.createShader(0x8B30); // FRAGMENT_SHADER
   testing.expectEqual(true, vs instanceof WebGLShader);
 
-  ctx.shaderSource(vs, 'void main() {}');
+  const vertexSource = 'void main() { gl_Position = vec4(0.0); }';
+  ctx.shaderSource(vs, vertexSource);
   ctx.compileShader(vs);
   // A false COMPILE_STATUS is what sends consumers into their throw path.
   testing.expectEqual(true, ctx.getShaderParameter(vs, 0x8B81));
   testing.expectEqual('', ctx.getShaderInfoLog(vs));
-  testing.expectEqual('void main() {}', ctx.getShaderSource(vs));
+  testing.expectEqual(vertexSource, ctx.getShaderSource(vs));
+
+  ctx.shaderSource(fs, 'precision mediump float; uniform vec4 uColor; void main() { gl_FragColor = uColor; }');
+  ctx.compileShader(fs);
+  testing.expectEqual(true, ctx.getShaderParameter(fs, 0x8B81));
 
   const program = ctx.createProgram();
   ctx.attachShader(program, vs);
@@ -168,6 +225,9 @@
 
   const buffer = ctx.createBuffer();
   testing.expectEqual(true, buffer instanceof WebGLBuffer);
+  testing.expectEqual(true, buffer instanceof WebGLObject);
+  testing.expectEqual(WebGLObject.prototype, Object.getPrototypeOf(WebGLBuffer.prototype));
+  testing.expectEqual(true, vs instanceof WebGLObject);
   ctx.bindBuffer(0x8892, buffer);
   ctx.bufferData(0x8892, new Float32Array([0, 1, 2]), 0x88E4);
 
@@ -179,10 +239,12 @@
   const fb = ctx.createFramebuffer();
   ctx.bindFramebuffer(0x8D40, fb);
   ctx.framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, texture, 0);
-  testing.expectEqual(0x8CD5, ctx.checkFramebufferStatus(0x8D40)); // COMPLETE
+  testing.expectEqual(ctx.isFramebuffer(fb) ? 0x8CD6 : 0x8CD5, ctx.checkFramebufferStatus(0x8D40)); // Unallocated texture is incomplete on native GL.
+  ctx.bindFramebuffer(0x8D40, null);
 
   const loc = ctx.getUniformLocation(program, 'uColor');
   testing.expectEqual(true, loc instanceof WebGLUniformLocation);
+  testing.expectEqual(false, loc instanceof WebGLObject);
   ctx.uniform4f(loc, 1, 1, 1, 1);
   ctx.uniformMatrix4fv(loc, false, new Float32Array(16));
 
@@ -201,6 +263,438 @@
   ctx.deleteBuffer(buffer);
   ctx.deleteTexture(texture);
   ctx.deleteProgram(program);
+}
+</script>
+
+<script id=native_angle_framebuffer_storage>
+{
+  const gl = document.createElement('canvas').getContext('webgl');
+  const initial = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  const framebuffer = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+  if (gl.isFramebuffer(framebuffer)) {
+    testing.expectEqual(gl.FRAMEBUFFER_COMPLETE, initial);
+    testing.expectEqual(gl.FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT, gl.checkFramebufferStatus(gl.FRAMEBUFFER));
+    const renderbuffer = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, renderbuffer);
+    testing.expectEqual(gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT, gl.checkFramebufferStatus(gl.FRAMEBUFFER));
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA4, 2, 2);
+    testing.expectEqual(gl.FRAMEBUFFER_COMPLETE, gl.checkFramebufferStatus(gl.FRAMEBUFFER));
+    gl.clearColor(0.25, 0.5, 0.75, 0.5);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const pixel = new Uint8Array(4);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+    testing.expectEqual([68, 136, 187, 136], Array.from(pixel));
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, null);
+    testing.expectEqual(gl.FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT, gl.checkFramebufferStatus(gl.FRAMEBUFFER));
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    testing.expectEqual(gl.FRAMEBUFFER_COMPLETE, gl.checkFramebufferStatus(gl.FRAMEBUFFER));
+    const defaultPixel = new Uint8Array(4);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, defaultPixel);
+    testing.expectEqual([0, 0, 0, 0], Array.from(defaultPixel));
+    testing.expectEqual(gl.NO_ERROR, gl.getError());
+  }
+}
+</script>
+
+<script id=native_angle_texture_sampling>
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 2;
+  const gl = canvas.getContext('webgl');
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  if (gl.isTexture(texture)) {
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    const input = new Uint8Array([255,0,0,255, 0,255,0,255, 0,0,255,255, 255,255,255,255]);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, input);
+    const framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    testing.expectEqual(gl.FRAMEBUFFER_COMPLETE, gl.checkFramebufferStatus(gl.FRAMEBUFFER));
+    const stored = new Uint8Array(16);
+    gl.readPixels(0, 0, 2, 2, gl.RGBA, gl.UNSIGNED_BYTE, stored);
+    testing.expectEqual(Array.from(input), Array.from(stored));
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const shader = (type, source) => {
+      const value = gl.createShader(type);
+      gl.shaderSource(value, source);
+      gl.compileShader(value);
+      return value;
+    };
+    const vertex = shader(gl.VERTEX_SHADER, 'attribute vec2 a; void main(){gl_Position=vec4(a,0.0,1.0);}');
+    const fragment = shader(gl.FRAGMENT_SHADER, 'precision mediump float; uniform sampler2D uTexture; void main(){gl_FragColor=texture2D(uTexture,gl_FragCoord.xy/2.0);}');
+    const program = gl.createProgram();
+    gl.attachShader(program, vertex);
+    gl.attachShader(program, fragment);
+    gl.linkProgram(program);
+    gl.useProgram(program);
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,3,-1,-1,3]), gl.STATIC_DRAW);
+    const attribute = gl.getAttribLocation(program, 'a');
+    gl.enableVertexAttribArray(attribute);
+    gl.vertexAttribPointer(attribute, 2, gl.FLOAT, false, 0, 0);
+    gl.viewport(0, 0, 2, 2);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const sampled = new Uint8Array(16);
+    gl.readPixels(0, 0, 2, 2, gl.RGBA, gl.UNSIGNED_BYTE, sampled);
+    testing.expectEqual(Array.from(input), Array.from(sampled));
+    testing.expectEqual(gl.NO_ERROR, gl.getError());
+  }
+}
+</script>
+
+<script id=native_angle_texture_pixel_store>
+{
+  const gl = document.createElement('canvas').getContext('webgl');
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  if (gl.isTexture(texture)) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    const framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    testing.expectEqual([4, false, false, gl.BROWSER_DEFAULT_WEBGL], [gl.getParameter(gl.UNPACK_ALIGNMENT), gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL), gl.getParameter(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL), gl.getParameter(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL)]);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    testing.expectEqual([1, true, true, 0], [gl.getParameter(gl.UNPACK_ALIGNMENT), gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL), gl.getParameter(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL), gl.getParameter(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL)]);
+    const input = new Uint8Array([10,20,30,128, 40,50,60,255, 70,80,90,64, 100,110,120,0]);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 2, 2, gl.RGBA, gl.UNSIGNED_BYTE, input);
+    const output = new Uint8Array(16);
+    gl.readPixels(0, 0, 2, 2, gl.RGBA, gl.UNSIGNED_BYTE, output);
+    testing.expectEqual(gl.FRAMEBUFFER_COMPLETE, gl.checkFramebufferStatus(gl.FRAMEBUFFER));
+    testing.expectEqual([17,20,22,64, 0,0,0,0, 5,10,15,128, 40,50,60,255], Array.from(output));
+    testing.expectEqual(gl.NO_ERROR, gl.getError());
+  }
+}
+</script>
+
+<script id=native_angle_texture_validation>
+{
+  const gl = document.createElement('canvas').getContext('webgl');
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  if (gl.isTexture(texture)) {
+    testing.expectEqual([4, gl.BROWSER_DEFAULT_WEBGL, gl.NO_ERROR], [gl.getParameter(gl.UNPACK_ALIGNMENT), gl.getParameter(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL), gl.getError()]);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 3);
+    testing.expectEqual([4, gl.INVALID_VALUE, gl.NO_ERROR], [gl.getParameter(gl.UNPACK_ALIGNMENT), gl.getError(), gl.getError()]);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, 42);
+    testing.expectEqual([gl.BROWSER_DEFAULT_WEBGL, gl.INVALID_VALUE, gl.NO_ERROR], [gl.getParameter(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL), gl.getError(), gl.getError()]);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+    testing.expectEqual([gl.INVALID_OPERATION, gl.NO_ERROR], [gl.getError(), gl.getError()]);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGB, gl.UNSIGNED_BYTE, new Uint8Array(16));
+    testing.expectEqual([gl.INVALID_OPERATION, gl.NO_ERROR], [gl.getError(), gl.getError()]);
+  }
+}
+</script>
+
+<script id=native_angle_state_queries>
+{
+  const gl = document.createElement('canvas').getContext('webgl');
+  const missingTexture = [gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER), gl.getError()];
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  if (gl.isTexture(texture)) {
+    testing.expectEqual([null, gl.INVALID_OPERATION], missingTexture);
+    testing.expectEqual([9986, 9729, 10497, 10497], [gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER), gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER), gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S), gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T)]);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    testing.expectEqual([9728, 9728, 33071, 10497], [gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER), gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER), gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S), gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T)]);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.viewport(1, 2, 3, 4);
+    testing.expectEqual(gl.TEXTURE1, gl.getParameter(gl.ACTIVE_TEXTURE));
+    testing.expectEqual([1, 2, 3, 4], Array.from(gl.getParameter(gl.VIEWPORT)));
+    testing.expectEqual([null, gl.INVALID_OPERATION], [gl.getRenderbufferParameter(gl.RENDERBUFFER, gl.RENDERBUFFER_WIDTH), gl.getError()]);
+    const renderbuffer = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
+    testing.expectEqual([0, 0, gl.RGBA4], [gl.getRenderbufferParameter(gl.RENDERBUFFER, gl.RENDERBUFFER_WIDTH), gl.getRenderbufferParameter(gl.RENDERBUFFER, gl.RENDERBUFFER_HEIGHT), gl.getRenderbufferParameter(gl.RENDERBUFFER, gl.RENDERBUFFER_INTERNAL_FORMAT)]);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA4, 2, 3);
+    testing.expectEqual([2, 3, gl.RGBA4, 4, 4], [gl.getRenderbufferParameter(gl.RENDERBUFFER, gl.RENDERBUFFER_WIDTH), gl.getRenderbufferParameter(gl.RENDERBUFFER, gl.RENDERBUFFER_HEIGHT), gl.getRenderbufferParameter(gl.RENDERBUFFER, gl.RENDERBUFFER_INTERNAL_FORMAT), gl.getRenderbufferParameter(gl.RENDERBUFFER, gl.RENDERBUFFER_RED_SIZE), gl.getRenderbufferParameter(gl.RENDERBUFFER, gl.RENDERBUFFER_ALPHA_SIZE)]);
+    testing.expectEqual(gl.NO_ERROR, gl.getError());
+  }
+}
+</script>
+
+<script id=native_angle_binding_identity>
+{
+  const gl = document.createElement('canvas').getContext('webgl');
+  const initial = [gl.getParameter(gl.ARRAY_BUFFER_BINDING), gl.getParameter(gl.TEXTURE_BINDING_2D), gl.getParameter(gl.FRAMEBUFFER_BINDING), gl.getParameter(gl.RENDERBUFFER_BINDING)];
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  const framebuffer = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+  const renderbuffer = gl.createRenderbuffer();
+  gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
+  if (gl.isBuffer(buffer)) {
+    testing.expectEqual([null, null, null, null], initial);
+    testing.expectEqual(true, gl.getParameter(gl.ARRAY_BUFFER_BINDING) === buffer);
+    testing.expectEqual(true, gl.getParameter(gl.TEXTURE_BINDING_2D) === texture);
+    testing.expectEqual(true, gl.getParameter(gl.FRAMEBUFFER_BINDING) === framebuffer);
+    testing.expectEqual(true, gl.getParameter(gl.RENDERBUFFER_BINDING) === renderbuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    testing.expectEqual(5890, gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE));
+    testing.expectEqual(true, gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME) === texture);
+    testing.expectEqual(0, gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL));
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, renderbuffer);
+    testing.expectEqual(gl.RENDERBUFFER, gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE));
+    testing.expectEqual(true, gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME) === renderbuffer);
+    gl.activeTexture(gl.TEXTURE1);
+    testing.expectEqual(null, gl.getParameter(gl.TEXTURE_BINDING_2D));
+    gl.activeTexture(gl.TEXTURE0);
+    testing.expectEqual(true, gl.getParameter(gl.TEXTURE_BINDING_2D) === texture);
+    testing.expectEqual(gl.NO_ERROR, gl.getError());
+  }
+}
+</script>
+
+<script id=native_angle_program_lifecycle>
+{
+  const gl = document.createElement('canvas').getContext('webgl');
+  const program = gl.createProgram();
+  if (gl.isProgram(program)) {
+    testing.expectEqual([0, false], [gl.getAttachedShaders(program).length, gl.getProgramParameter(program, gl.VALIDATE_STATUS)]);
+    const vertex = gl.createShader(gl.VERTEX_SHADER);
+    const fragment = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(vertex, 'attribute vec2 a; void main(){gl_Position=vec4(a,0.0,1.0);}');
+    gl.shaderSource(fragment, 'precision mediump float; void main(){gl_FragColor=vec4(1.0);}');
+    gl.compileShader(vertex);
+    gl.compileShader(fragment);
+    gl.attachShader(program, vertex);
+    gl.attachShader(program, fragment);
+    const attached = gl.getAttachedShaders(program);
+    testing.expectEqual([2, 2, true, true], [gl.getProgramParameter(program, gl.ATTACHED_SHADERS), attached.length, attached[0] === vertex, attached[1] === fragment]);
+    gl.linkProgram(program);
+    gl.validateProgram(program);
+    testing.expectEqual([true, true, ''], [gl.getProgramParameter(program, gl.LINK_STATUS), gl.getProgramParameter(program, gl.VALIDATE_STATUS), gl.getProgramInfoLog(program)]);
+    gl.detachShader(program, vertex);
+    testing.expectEqual([1, 1, true], [gl.getProgramParameter(program, gl.ATTACHED_SHADERS), gl.getAttachedShaders(program).length, gl.getAttachedShaders(program)[0] === fragment]);
+    gl.deleteShader(vertex);
+    testing.expectEqual([false, null], [gl.isShader(vertex), gl.getShaderParameter(vertex, gl.DELETE_STATUS)]);
+    const bad = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(bad, 'not glsl');
+    gl.compileShader(bad);
+    testing.expectEqual(false, gl.getShaderParameter(bad, gl.COMPILE_STATUS));
+    testing.expectEqual("ERROR: 0:1: 'not' : syntax error\n\0", gl.getShaderInfoLog(bad));
+    testing.expectEqual('not glsl', gl.getShaderSource(bad));
+    testing.expectEqual(gl.INVALID_VALUE, gl.getError());
+  }
+}
+</script>
+
+<script id=native_angle_uniform_pixels>
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 2;
+  const gl = canvas.getContext('webgl');
+  const shader = (type, source) => {
+    const value = gl.createShader(type);
+    gl.shaderSource(value, source);
+    gl.compileShader(value);
+    return value;
+  };
+  const vs = shader(gl.VERTEX_SHADER, 'attribute vec2 a; void main(){gl_Position=vec4(a,0.0,1.0);}');
+  const fs = shader(gl.FRAGMENT_SHADER, 'precision mediump float; uniform vec4 uColor; void main(){gl_FragColor=uColor;}');
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  gl.useProgram(program);
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,3,-1,-1,3]), gl.STATIC_DRAW);
+  const attribute = gl.getAttribLocation(program, 'a');
+  if (attribute >= 0) {
+    const location = gl.getUniformLocation(program, 'uColor');
+    testing.expectEqual(true, location instanceof WebGLUniformLocation);
+    testing.expectEqual(null, gl.getUniformLocation(program, 'missing'));
+    testing.expectEqual(1, gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS));
+    const info = gl.getActiveUniform(program, 0);
+    testing.expectEqual('uColor', info.name);
+    testing.expectEqual(gl.FLOAT_VEC4, info.type);
+    gl.uniform4f(location, 0.25, 0.5, 0.75, 0.5);
+    gl.enableVertexAttribArray(attribute);
+    gl.vertexAttribPointer(attribute, 2, gl.FLOAT, false, 0, 0);
+    gl.viewport(0, 0, 2, 2);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const pixels = new Uint8Array(16);
+    gl.readPixels(0, 0, 2, 2, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    for (let i = 0; i < pixels.length; i += 4) {
+      testing.expectEqual(64, pixels[i]);
+      testing.expectEqual(128, pixels[i + 1]);
+      testing.expectEqual(191, pixels[i + 2]);
+      testing.expectEqual(128, pixels[i + 3]);
+    }
+    testing.expectEqual(gl.NO_ERROR, gl.getError());
+  }
+}
+</script>
+
+<script id=native_angle_object_lifecycle>
+{
+  const gl = document.createElement('canvas').getContext('webgl');
+  const other = document.createElement('canvas').getContext('webgl');
+  const buffer = gl.createBuffer();
+  const program = gl.createProgram();
+  const shader = gl.createShader(gl.VERTEX_SHADER);
+  const texture = gl.createTexture();
+  const framebuffer = gl.createFramebuffer();
+  const renderbuffer = gl.createRenderbuffer();
+  const foreign = other.createBuffer();
+  if (gl.isProgram(program)) {
+    testing.expectEqual(false, gl.isBuffer(buffer));
+    testing.expectEqual(true, gl.isShader(shader));
+    testing.expectEqual(false, gl.isTexture(texture));
+    testing.expectEqual(false, gl.isFramebuffer(framebuffer));
+    testing.expectEqual(false, gl.isRenderbuffer(renderbuffer));
+    testing.expectEqual(false, gl.isBuffer(foreign));
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
+    testing.expectEqual(true, gl.isBuffer(buffer));
+    testing.expectEqual(true, gl.isTexture(texture));
+    testing.expectEqual(true, gl.isFramebuffer(framebuffer));
+    testing.expectEqual(true, gl.isRenderbuffer(renderbuffer));
+    gl.deleteBuffer(buffer);
+    gl.deleteProgram(program);
+    gl.deleteShader(shader);
+    gl.deleteTexture(texture);
+    gl.deleteFramebuffer(framebuffer);
+    gl.deleteRenderbuffer(renderbuffer);
+    testing.expectEqual(false, gl.isBuffer(buffer));
+    testing.expectEqual(false, gl.isProgram(program));
+    testing.expectEqual(false, gl.isShader(shader));
+    testing.expectEqual(false, gl.isTexture(texture));
+    testing.expectEqual(false, gl.isFramebuffer(framebuffer));
+    testing.expectEqual(false, gl.isRenderbuffer(renderbuffer));
+    testing.expectEqual(gl.NO_ERROR, gl.getError());
+  }
+}
+</script>
+
+<script id=native_angle_triangle_pixels>
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 2;
+  const gl = canvas.getContext('webgl');
+  const shader = (type, source) => {
+    const result = gl.createShader(type);
+    gl.shaderSource(result, source);
+    gl.compileShader(result);
+    return result;
+  };
+  const vs = shader(gl.VERTEX_SHADER, 'attribute vec2 a; void main(){gl_Position=vec4(a,0.0,1.0);}');
+  const fs = shader(gl.FRAGMENT_SHADER, 'precision mediump float; void main(){gl_FragColor=vec4(gl_FragCoord.xy/2.0,0.5,0.5);}');
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  gl.useProgram(program);
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(program, 'a');
+  if (loc >= 0) {
+    testing.expectEqual(true, gl.getShaderParameter(vs, gl.COMPILE_STATUS));
+    testing.expectEqual(true, gl.getShaderParameter(fs, gl.COMPILE_STATUS));
+    testing.expectEqual(true, gl.getProgramParameter(program, gl.LINK_STATUS));
+    testing.expectEqual(2, gl.getProgramParameter(program, gl.ATTACHED_SHADERS));
+    testing.expectEqual(1, gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES));
+    testing.expectEqual(0, gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS));
+    const info = gl.getActiveAttrib(program, 0);
+    testing.expectEqual('a', info.name);
+    testing.expectEqual(1, info.size);
+    testing.expectEqual(gl.FLOAT_VEC2, info.type);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.viewport(0, 0, 2, 2);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const pixels = new Uint8Array(16);
+    gl.readPixels(0, 0, 2, 2, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    const chrome = [64,64,128,128, 191,64,128,128, 64,191,128,128, 191,191,128,128];
+    for (let i = 0; i < chrome.length; i++) testing.expectEqual(chrome[i], pixels[i]);
+    testing.expectEqual(gl.NO_ERROR, gl.getError());
+  }
+}
+</script>
+
+<script id=clear_and_read_pixels>
+{
+  // Measured in normal headed Chrome 151 on a 2x2 WebGL drawing buffer.
+  for (const kind of ['webgl', 'webgl2']) for (const alpha of [true, false]) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 2;
+    const gl = canvas.getContext(kind, {alpha});
+    testing.expectEqual(alpha, gl.getContextAttributes().alpha);
+    const pixels = new Uint8Array(16);
+    gl.readPixels(0, 0, 2, 2, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    testing.expectEqual(alpha ? 0 : 255, pixels[3]);
+    gl.clearColor(.2, .4, .6, .5);
+    const clearColor = gl.getParameter(gl.COLOR_CLEAR_VALUE);
+    testing.expectEqual(true, clearColor instanceof Float32Array);
+    testing.expectEqual(Math.fround(.2), clearColor[0]);
+    testing.expectEqual(Math.fround(.4), clearColor[1]);
+    testing.expectEqual(Math.fround(.6), clearColor[2]);
+    testing.expectEqual(.5, clearColor[3]);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.readPixels(0, 0, 2, 2, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    for (let i = 0; i < pixels.length; i += 4) {
+      testing.expectEqual(51, pixels[i]);
+      testing.expectEqual(102, pixels[i + 1]);
+      testing.expectEqual(153, pixels[i + 2]);
+      testing.expectEqual(alpha ? 128 : 255, pixels[i + 3]);
+    }
+    testing.expectEqual(0, gl.getError());
+
+    canvas.width = 2;
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    testing.expectEqual(0, pixels[0]);
+    testing.expectEqual(alpha ? 0 : 255, pixels[3]);
+  }
+}
+</script>
+
+<script id=webgl_canvas_png_bytes>
+{
+  // Exact 2x2 PNGs from normal headed Chrome 151 on macOS. Matching decoded
+  // colors is insufficient here: scripts can hash the full data URL.
+  const expected = {
+    true: {
+      blank: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAADUlEQVR4AWJigAI4AwAAAP//Y0HangAAAAZJREFUAwAASAAFuIFDmQAAAABJRU5ErkJggg==',
+      clear: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4AWJKO/2/AYSZGKAAAAAA//8mgG5FAAAABklEQVQDAEhWBWXAXCgsAAAAAElFTkSuQmCC',
+    },
+    false: {
+      blank: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4AWJiYGD4D8IgBpBmYAAAAAD//7vS9wEAAAAGSURBVAMAGDACA6ybwrYAAAAASUVORK5CYII=',
+      clear: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4AWIyTpv5H4SZGKAAAAAA//8MUV0YAAAABklEQVQDADjcBGew1EaLAAAAAElFTkSuQmCC',
+    },
+  };
+  for (const alpha of [true, false]) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 2;
+    const gl = canvas.getContext('webgl', {alpha});
+    testing.expectEqual(expected[alpha].blank, canvas.toDataURL());
+    gl.clearColor(.2, .4, .6, .5);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    testing.expectEqual(expected[alpha].clear, canvas.toDataURL());
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 2;
+  const gl = canvas.getContext('webgl', {premultipliedAlpha: false});
+  testing.expectEqual(false, gl.getContextAttributes().premultipliedAlpha);
+  gl.clearColor(.2, .4, .6, .5);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  testing.expectEqual(
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4AWIyTpvZAMJMDFAAAAAA//941cB0AAAABklEQVQDACz0A2nxCCrbAAAAAElFTkSuQmCC',
+    canvas.toDataURL());
 }
 </script>
 

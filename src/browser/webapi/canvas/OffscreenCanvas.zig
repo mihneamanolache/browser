@@ -21,6 +21,10 @@ const js = @import("../../js/js.zig");
 
 const Blob = @import("../Blob.zig");
 const OffscreenCanvasRenderingContext2D = @import("OffscreenCanvasRenderingContext2D.zig");
+const context2d = @import("context2d.zig");
+const Bitmap = @import("Bitmap.zig");
+const WebGLRenderingContext = @import("WebGLRenderingContext.zig");
+const WebGL2RenderingContext = WebGLRenderingContext.WebGL2RenderingContext;
 
 const Execution = js.Execution;
 
@@ -37,6 +41,8 @@ _cached: ?DrawingContext = null,
 /// we're using tagged union.
 const DrawingContext = union(enum) {
     @"2d": *OffscreenCanvasRenderingContext2D,
+    webgl: *WebGLRenderingContext,
+    webgl2: *WebGL2RenderingContext,
 };
 
 pub fn constructor(width: u32, height: u32, exec: *Execution) !*OffscreenCanvas {
@@ -52,6 +58,7 @@ pub fn getWidth(self: *const OffscreenCanvas) u32 {
 
 fn setWidth(self: *OffscreenCanvas, value: u32) void {
     self._width = value;
+    self.resetBitmap();
 }
 
 pub fn getHeight(self: *const OffscreenCanvas) u32 {
@@ -60,31 +67,110 @@ pub fn getHeight(self: *const OffscreenCanvas) u32 {
 
 fn setHeight(self: *OffscreenCanvas, value: u32) void {
     self._height = value;
+    self.resetBitmap();
 }
 
-fn getContext(self: *OffscreenCanvas, context_type: []const u8, exec: *Execution) !?DrawingContext {
+fn resetBitmap(self: *OffscreenCanvas) void {
+    const cached = self._cached orelse return;
+    switch (cached) {
+        .@"2d" => |ctx| {
+            ctx._bitmap.reset();
+            ctx._state = .{};
+            ctx._state_stack.clearRetainingCapacity();
+        },
+        .webgl => |ctx| {
+            ctx._drawing_buffer_width = self._width;
+            ctx._drawing_buffer_height = self._height;
+            ctx.resetDrawingBuffer();
+        },
+        .webgl2 => |ctx| {
+            ctx._proto._drawing_buffer_width = self._width;
+            ctx._proto._drawing_buffer_height = self._height;
+            ctx._proto.resetDrawingBuffer();
+        },
+    }
+}
+
+fn getContext(self: *OffscreenCanvas, context_type: []const u8, options: ?context2d.ContextOptions, exec: *Execution) !?DrawingContext {
     if (self._cached) |cached| {
         return switch (cached) {
             .@"2d" => if (std.mem.eql(u8, context_type, "2d")) cached else null,
+            .webgl => if (std.mem.eql(u8, context_type, "webgl") or std.mem.eql(u8, context_type, "experimental-webgl")) cached else null,
+            .webgl2 => if (std.mem.eql(u8, context_type, "webgl2")) cached else null,
         };
     }
 
     if (std.mem.eql(u8, context_type, "2d")) {
-        const ctx = try exec._factory.create(OffscreenCanvasRenderingContext2D{ ._canvas = self });
+        const ctx = try exec._factory.create(OffscreenCanvasRenderingContext2D{
+            ._canvas = self,
+            ._software_raster = if (options) |o| o.willReadFrequently else false,
+            ._context_options = options orelse .{},
+            ._bitmap = .{
+                ._opaque = if (options) |o| !o.alpha else false,
+                ._opaque_activated = if (options) |o| !o.alpha else false,
+                ._preserve_raw_put = if (options) |o| !o.alpha and !o.willReadFrequently else false,
+                ._put_unpremultiplied = if (options) |o| !o.alpha and o.willReadFrequently else false,
+            },
+        });
         self._cached = .{ .@"2d" = ctx };
+        return self._cached;
+    }
+
+    if (std.mem.eql(u8, context_type, "webgl") or std.mem.eql(u8, context_type, "experimental-webgl")) {
+        const ctx = try exec._factory.create(WebGLRenderingContext{
+            ._canvas = null,
+            ._offscreen_canvas = self,
+            ._drawing_buffer_width = self._width,
+            ._drawing_buffer_height = self._height,
+            ._attributes = .{
+                .alpha = if (options) |o| o.alpha else true,
+                .premultipliedAlpha = if (options) |o| o.premultipliedAlpha else true,
+            },
+        });
+        self._cached = .{ .webgl = ctx };
+        return self._cached;
+    }
+
+    if (std.mem.eql(u8, context_type, "webgl2")) {
+        const ctx = try exec._factory.chained(.{
+            WebGLRenderingContext{
+                ._canvas = null,
+                ._offscreen_canvas = self,
+                ._drawing_buffer_width = self._width,
+                ._drawing_buffer_height = self._height,
+                ._version = .webgl2,
+                ._attributes = .{
+                    .alpha = if (options) |o| o.alpha else true,
+                    .premultipliedAlpha = if (options) |o| o.premultipliedAlpha else true,
+                },
+            },
+            WebGL2RenderingContext{ ._proto = undefined },
+        });
+        self._cached = .{ .webgl2 = ctx };
         return self._cached;
     }
 
     return null;
 }
 
-/// Resolves to the same blank PNG as `HTMLCanvasElement.toBlob`. A canvas
-/// with no pixels rejects with IndexSizeError, per spec.
-fn convertToBlob(self: *const OffscreenCanvas, exec: *Execution) !js.Promise {
+/// Encode the current bitmap. A canvas with no pixels rejects with
+/// IndexSizeError, per spec.
+fn convertToBlob(self: *OffscreenCanvas, exec: *Execution) !js.Promise {
     if (!BlankPNG.hasBitmap(self._width, self._height)) {
         return error.IndexSizeError;
     }
-    const blob = try BlankPNG.blob(exec);
+    const bytes = blk: {
+        if (self._cached) |cached| {
+            switch (cached) {
+                .@"2d" => |ctx| break :blk try ctx._bitmap.png(self._width, self._height, exec.arena, exec.local_arena),
+                .webgl => |ctx| break :blk try ctx.png(exec.local_arena, exec),
+                .webgl2 => |ctx| break :blk try ctx._proto.png(exec.local_arena, exec),
+            }
+        }
+        var blank: Bitmap = .{};
+        break :blk try blank.png(self._width, self._height, exec.local_arena, exec.local_arena);
+    };
+    const blob = try Blob.initFromBytes(bytes, "image/png", exec);
     return exec.js.local.?.resolvePromise(blob);
 }
 

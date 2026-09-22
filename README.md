@@ -244,6 +244,13 @@ longer clobber each other's page:
 
 A skill is available in [lightpanda-io/agent-skill](https://github.com/lightpanda-io/agent-skill).
 
+### Stealth and fingerprinting
+
+This fork presents a Chrome 151 identity on the wire and in JS. See
+[STEALTH.md](STEALTH.md) for the machine/region profile system, the
+TLS and HTTP/2 work, the flags you need when proxying, and — importantly —
+a plain list of what it does *not* do.
+
 ### Telemetry
 
 By default, Lightpanda collects and sends usage telemetry. This can be disabled by setting an environment variable `LIGHTPANDA_DISABLE_TELEMETRY=true`. You can read Lightpanda's privacy policy at: [https://lightpanda.io/privacy-policy](https://lightpanda.io/privacy-policy).

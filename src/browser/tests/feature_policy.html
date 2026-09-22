@@ -1,0 +1,47 @@
+<!doctype html>
+<script src="testing.js"></script>
+<script id=feature_policy>
+const policy = document.featurePolicy;
+
+testing.expectEqual('object', typeof policy);
+testing.expectEqual('[object FeaturePolicy]', Object.prototype.toString.call(policy));
+testing.expectEqual('FeaturePolicy', policy.constructor.name);
+testing.expectEqual(true, policy === document.featurePolicy);
+testing.expectEqual('function', typeof FeaturePolicy);
+testing.expectEqual('undefined', typeof PermissionsPolicy);
+testing.expectEqual(undefined, document.permissionsPolicy);
+
+testing.expectEqual(0, policy.features.length);
+testing.expectEqual(0, policy.allowedFeatures.length);
+testing.expectEqual(1, policy.allowsFeature.length);
+testing.expectEqual(1, policy.getAllowlistForFeature.length);
+
+const features = policy.features();
+const allowed = policy.allowedFeatures();
+testing.expectEqual(82, features.length);
+testing.expectEqual(81, allowed.length);
+testing.expectEqual('geolocation', features[0]);
+testing.expectEqual('microphone', features.at(-1));
+testing.expectEqual(true, features.includes('unload'));
+testing.expectEqual(false, allowed.includes('unload'));
+testing.expectEqual(true, policy.allowsFeature('camera'));
+testing.expectEqual(true, policy.allowsFeature('camera', location.origin));
+testing.expectEqual(false, policy.allowsFeature('camera', 'https://example.com'));
+testing.expectEqual(false, policy.allowsFeature('definitely-not-a-feature'));
+testing.expectEqual(location.origin, policy.getAllowlistForFeature('camera')[0]);
+testing.expectEqual(0, policy.getAllowlistForFeature('unload').length);
+testing.expectEqual(0, policy.getAllowlistForFeature('definitely-not-a-feature').length);
+
+const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'featurePolicy');
+testing.expectEqual(true, descriptor.enumerable);
+testing.expectEqual(true, descriptor.configurable);
+testing.expectEqual(undefined, descriptor.set);
+
+let constructorThrew = false;
+try {
+  new FeaturePolicy();
+} catch (error) {
+  constructorThrew = error instanceof TypeError;
+}
+testing.expectEqual(true, constructorThrew);
+</script>

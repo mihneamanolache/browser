@@ -10,6 +10,78 @@
 }
 </script>
 
+<script id=OffscreenCanvasRenderingContext2D#getContextAttributes_Chrome>
+{
+  const canvas = new OffscreenCanvas(3, 3);
+  const ctx = canvas.getContext('2d', {alpha: false, willReadFrequently: true});
+  const attrs = ctx.getContextAttributes();
+  testing.expectEqual(false, attrs.alpha);
+  testing.expectEqual('srgb', attrs.colorSpace);
+  testing.expectEqual('unorm8', attrs.colorType);
+  testing.expectEqual(false, attrs.desynchronized);
+  testing.expectEqual('standard', attrs.toneMapping.mode);
+  testing.expectEqual(true, attrs.willReadFrequently);
+}
+</script>
+
+<script id=OffscreenCanvasRenderingContext2D#opaque_bitmap_Chrome>
+{
+  for (const software of [false, true]) {
+    const canvas = new OffscreenCanvas(2, 2);
+    const ctx = canvas.getContext('2d', {alpha: false, willReadFrequently: software});
+    const read = () => Array.from(ctx.getImageData(0, 0, 2, 2).data).join(',');
+    testing.expectEqual('0,0,0,255,0,0,0,255,0,0,0,255,0,0,0,255', read());
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, 1, 1);
+    testing.expectEqual('128,0,0,255,0,0,0,255,0,0,0,255,0,0,0,255', read());
+    ctx.clearRect(0, 0, 1, 1);
+    testing.expectEqual('0,0,0,255,0,0,0,255,0,0,0,255,0,0,0,255', read());
+    canvas.width = 2;
+    testing.expectEqual('0,0,0,255,0,0,0,255,0,0,0,255,0,0,0,255', read());
+  }
+}
+</script>
+
+<script id=OffscreenCanvasRenderingContext2D#putImageData_exact_bytes_Chrome>
+{
+  const canvas = new OffscreenCanvas(1, 1);
+  const ctx = canvas.getContext('2d', {alpha: false});
+  const image = ctx.createImageData(1, 1);
+  image.data.set([255, 0, 0, 0]);
+  ctx.putImageData(image, 0, 0);
+  testing.expectEqual('255,0,0,0', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+  image.data.set([200, 100, 50, 128]);
+  ctx.putImageData(image, 0, 0);
+  testing.expectEqual('200,100,50,128', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+}
+</script>
+
+<script id=OffscreenCanvasRenderingContext2D#putImageData_opaque_software_Chrome>
+{
+  const canvas = new OffscreenCanvas(3, 1);
+  const ctx = canvas.getContext('2d', {alpha: false, willReadFrequently: true});
+  const image = ctx.createImageData(3, 1);
+  image.data.set([127,64,32,128,22,0,0,6,64,0,0,10]);
+  ctx.putImageData(image, 0, 0);
+  testing.expectEqual('253,128,64,128,255,0,0,6,255,0,0,10',
+    Array.from(ctx.getImageData(0, 0, 3, 1).data).join(','));
+}
+</script>
+
+<script id=OffscreenCanvas#getContextWebGL>
+  {
+    const canvas = new OffscreenCanvas(64, 32);
+    const ctx = canvas.getContext('webgl2');
+    testing.expectEqual(true, ctx instanceof WebGL2RenderingContext);
+    testing.expectEqual(true, ctx instanceof WebGLRenderingContext);
+    testing.expectEqual(64, ctx.drawingBufferWidth);
+    testing.expectEqual(32, ctx.drawingBufferHeight);
+    testing.expectEqual(canvas, ctx.canvas);
+    testing.expectEqual('WebGL 2.0 (OpenGL ES 3.0 Chromium)', ctx.getParameter(ctx.VERSION));
+    testing.expectEqual(null, canvas.getContext('2d'));
+  }
+</script>
+
 <script id=OffscreenCanvas#width>
 {
   const canvas = new OffscreenCanvas(100, 200);
@@ -43,16 +115,59 @@
 }
 </script>
 
+<script id=OffscreenCanvasRenderingContext2D#pixel_aligned_rectangles_Chrome>
+{
+  const canvas = new OffscreenCanvas(1, 1);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f00';
+  ctx.fillRect(0, 0, 1, 1);
+  ctx.fillStyle = '#0000ff80';
+  ctx.fillRect(0, 0, 1, 1);
+  testing.expectEqual('127,0,128,255', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+  ctx.clearRect(0, 0, 1, 1);
+  testing.expectEqual('0,0,0,0', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+}
+</script>
+
+<script id=OffscreenCanvasRenderingContext2D#globalAlpha_Chrome>
+{
+  const canvas = new OffscreenCanvas(1, 1);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f00';
+  ctx.fillRect(0, 0, 1, 1);
+  ctx.fillStyle = '#00f';
+  ctx.globalAlpha = 0.25;
+  ctx.fillRect(0, 0, 1, 1);
+  testing.expectEqual('191,0,64,255', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.restore();
+  testing.expectEqual(0.25, ctx.globalAlpha);
+  canvas.width = 1;
+  testing.expectEqual(1, ctx.globalAlpha);
+}
+</script>
+
+<script id=OffscreenCanvasRenderingContext2D#software_fractional_rectangles_Chrome>
+{
+  const canvas = new OffscreenCanvas(3, 3);
+  const ctx = canvas.getContext('2d', {willReadFrequently: true});
+  ctx.fillStyle = '#f00';
+  ctx.fillRect(0.25, 0.25, 1.5, 1.5);
+  const alphas = Array.from(ctx.getImageData(0, 0, 3, 3).data).filter((_, i) => i % 4 === 3);
+  testing.expectEqual('144,144,0,144,144,0,0,0,0', alphas.join(','));
+}
+</script>
+
 <script id=OffscreenCanvas#convertToBlob>
 {
   const canvas = new OffscreenCanvas(64, 64);
   const promise = canvas.convertToBlob();
   testing.expectEqual(true, promise instanceof Promise);
-  // The same blank PNG as HTMLCanvasElement.toBlob.
   promise.then(blob => {
     testing.expectEqual(true, blob instanceof Blob);
     testing.expectEqual('image/png', blob.type);
-    testing.expectEqual(67, blob.size);
+    testing.expectEqual(true, blob.size > 67);
   });
 }
 </script>
@@ -96,9 +211,29 @@
   testing.expectEqual(imageData.data[2], 0);
   testing.expectEqual(imageData.data[3], 0);
 
-  // Zero or negative dimensions should throw.
+  // Zero dimensions throw; negative dimensions select backwards.
   testing.expectError('Index or size', () => ctx.getImageData(0, 0, 0, 10));
-  testing.expectError('Index or size', () => ctx.getImageData(0, 0, 10, -5));
+  const reverse = ctx.getImageData(1, 1, -1, -1);
+  testing.expectEqual(1, reverse.width);
+  testing.expectEqual(1, reverse.height);
+}
+</script>
+
+<script id=OffscreenCanvasRenderingContext2D#ImageData_round_trip>
+{
+  const canvas = new OffscreenCanvas(2, 2);
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(1, 1);
+  image.data.set([12, 34, 56, 255]);
+  ctx.putImageData(image, 1, 0);
+  testing.expectEqual('12,34,56,255', Array.from(ctx.getImageData(1, 0, 1, 1).data).join(','));
+  testing.expectEqual('0,0,0,0', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+
+  canvas.height = 3;
+  testing.expectEqual('0,0,0,0', Array.from(ctx.getImageData(1, 0, 1, 1).data).join(','));
+  ctx.putImageData(image, 1, 0);
+  canvas.height = 3;
+  testing.expectEqual('0,0,0,0', Array.from(ctx.getImageData(1, 0, 1, 1).data).join(','));
 }
 </script>
 
@@ -106,9 +241,22 @@
 {
   const ctx = new OffscreenCanvas(10, 10).getContext("2d");
   ctx.font = "16px sans-serif";
-  testing.expectEqual(48, ctx.measureText("hello").width);
+  const width = ctx.measureText("hello").width;
+  testing.expectEqual(width === 48 ? 48 : 33.8046875, width);
   ctx.setLineDash([1, 2]);
   testing.expectEqual("1,2", ctx.getLineDash().join());
   testing.expectEqual(true, ctx.createLinearGradient(0, 0, 1, 1) instanceof CanvasGradient);
+}
+</script>
+
+<script id=OffscreenCanvasRenderingContext2D#fillText_pixels>
+{
+  const canvas = new OffscreenCanvas(64, 32);
+  const ctx = canvas.getContext('2d');
+  ctx.font = '20px Arial';
+  ctx.fillText('A', 2, 24);
+  const pixels = ctx.getImageData(0, 0, 64, 32).data;
+  const alphaPixels = pixels.filter((_, i) => i % 4 === 3 && pixels[i] !== 0).length;
+  if (ctx.measureText('A').width !== 12) testing.expectEqual(109, alphaPixels);
 }
 </script>

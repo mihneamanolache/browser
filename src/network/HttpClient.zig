@@ -459,16 +459,24 @@ pub fn getLanguages(self: *const Client) []const []const u8 {
 pub fn baselineHeaders(self: *const Client) [6]Transfer.RequestHeader {
     const hints = lp.Config.HttpHeaders;
     return .{
-        .{ .name = "User-Agent", .value = self.getUserAgent() },
         .{ .name = "Sec-Ch-Ua", .value = hints.sec_ch_ua, .source = .fixed },
-        .{ .name = "Sec-Ch-Ua-Full-Version-List", .value = hints.sec_ch_ua_full_version_list, .source = .fixed },
         // Chrome sends the two low-entropy hints unconditionally, alongside
         // Sec-Ch-Ua. Sending the brand list without them is a shape no real
         // Chrome produces.
         .{ .name = "Sec-Ch-Ua-Mobile", .value = hints.sec_ch_ua_mobile, .source = .fixed },
         .{ .name = "Sec-Ch-Ua-Platform", .value = hints.secChUaPlatform(), .source = .fixed },
-        // Omitting Accept-Language triggers bot-protection on some CDNs
-        // (Akamai) when Accept-Encoding is present.
+        .{ .name = "User-Agent", .value = self.getUserAgent() },
+        // Supplying this explicitly keeps libcurl from inserting it before
+        // every browser header. CURLOPT_ACCEPT_ENCODING remains enabled, so
+        // response decoding is unchanged. zstd is omitted because this build
+        // cannot decode it; advertising an unsupported coding is worse than
+        // the small Chrome-version difference.
+        .{ .name = "Accept-Encoding", .value = "gzip, deflate, br", .source = .fixed },
+        // Declaration order here does not reach the wire: orderChromeHeaders
+        // sorts every request by chromeHeaderRank, which is where Chrome's
+        // position for this header is recorded. Omitting Accept-Language
+        // triggers bot-protection on some CDNs (Akamai) when Accept-Encoding
+        // is present.
         .{ .name = "Accept-Language", .value = self.getAcceptLanguage() },
     };
 }
@@ -1078,7 +1086,9 @@ fn pipeline(self: *Client, transfer: *Transfer, from: SubmitFrom) !void {
                 try setOriginHeader(transfer);
             }
 
-            if (self.obey_cors and !transfer.req.internal) {
+            // CSS font fetches are always CORS-mode in Chrome, even while the
+            // generic fetch/XHR CORS gate remains opt-in for compatibility.
+            if ((self.obey_cors or transfer.req.resource_type == .font) and !transfer.req.internal) {
                 if (!isCrossOriginModeAllowed(transfer)) {
                     log.warn(.http, "blocked by mode", .{
                         .url = transfer.req.url,
@@ -1894,6 +1904,7 @@ pub const Request = struct {
         stylesheet,
         eventsource,
         image,
+        font,
         worker,
         ping,
 
@@ -1910,6 +1921,7 @@ pub const Request = struct {
                 .stylesheet => "Stylesheet",
                 .eventsource => "EventSource",
                 .image => "Image",
+                .font => "Font",
                 .worker => "Script",
                 .ping => "Ping",
             };
@@ -3061,6 +3073,7 @@ pub const Transfer = struct {
                 .stylesheet => "link",
                 .eventsource, .worker, .ping => "other",
                 .image => "img",
+                .font => "css",
             },
             .protocol = t.protocol,
             .start = t.start_time,
@@ -3261,6 +3274,7 @@ pub const Transfer = struct {
         // Build the conn's curl_slist from req_headers, fresh on every
         // attempt so redirect/auth retries pick up mutations and never
         // accumulate duplicates.
+        self.orderChromeHeaders();
         conn.clearHeaders();
         const arena = self.arena.allocator();
         for (self.req_headers.items) |hdr| {
@@ -3630,6 +3644,7 @@ pub const Transfer = struct {
             .script => "script",
             .stylesheet => "style",
             .image => "image",
+            .font => "font",
             .worker => "worker",
             // A beacon's destination really is empty, same as fetch().
             .xhr, .fetch, .eventsource, .ping => "empty",
@@ -3703,12 +3718,71 @@ pub const Transfer = struct {
         }
     }
 
+    fn isGoogleHostname(host: []const u8) bool {
+        if (std.ascii.eqlIgnoreCase(host, "google.com")) return true;
+        const suffix = ".google.com";
+        return host.len > suffix.len and std.ascii.endsWithIgnoreCase(host, suffix);
+    }
+
+    /// Chrome sends high-entropy client hints and its installation/variation
+    /// headers to Google. These were captured from a fresh, real Chrome 151
+    /// top-level search which received HTTP 200 on this machine and IP. Keep
+    /// them origin-scoped: x-client-data is not a generic web header.
+    fn seedGoogleChromeHeaders(self: *Transfer) !void {
+        if (self.req.resource_type != .document) return;
+        if (!isGoogleHostname(URL.getHostname(self.req.url))) return;
+
+        const arena = self.arena.allocator();
+        const quoted_arch = try std.fmt.allocPrint(arena, "\"{s}\"", .{lp.fingerprint.architecture()});
+        const quoted_platform_version = try std.fmt.allocPrint(arena, "\"{s}\"", .{lp.fingerprint.platformVersion()});
+        const quoted_model = try std.fmt.allocPrint(arena, "\"{s}\"", .{lp.fingerprint.model});
+        const quoted_bitness = try std.fmt.allocPrint(arena, "\"{s}\"", .{lp.fingerprint.bitness()});
+        const quoted_full_version = try std.fmt.allocPrint(arena, "\"{s}\"", .{lp.fingerprint.chrome_full_version});
+
+        // Chrome ships a built-in Accept-CH preload for Google origins, so a
+        // FRESH-PROFILE, COLD top-level navigation already carries the
+        // high-entropy hints. Captured 2026-09-22 from Google Chrome
+        // 151.0.7922.138 with a throwaway --user-data-dir, first request, via
+        // CDP Network.requestWillBeSentExtraInfo: arch, bitness,
+        // full-version-list, model, platform-version, wow64 and
+        // prefers-color-scheme are all present, alongside the
+        // x-browser-*/x-client-data block. Chrome for Testing 151 does the
+        // same. Withholding them cold is therefore a divergence, not a
+        // disguise -- send them on every Google document request.
+        try self.addHeader("Sec-Ch-Ua-Arch", quoted_arch, .{ .source = .fixed });
+        try self.addHeader("Sec-Ch-Ua-Platform-Version", quoted_platform_version, .{ .source = .fixed });
+        try self.addHeader("Sec-Ch-Ua-Model", quoted_model, .{ .source = .fixed });
+        try self.addHeader("Sec-Ch-Ua-Bitness", quoted_bitness, .{ .source = .fixed });
+        try self.addHeader("Sec-Ch-Ua-Wow64", if (lp.fingerprint.wow64) "?1" else "?0", .{ .source = .fixed });
+        try self.addHeader("Sec-Ch-Ua-Full-Version-List", lp.fingerprint.sec_ch_ua_full_version_list, .{ .source = .fixed });
+        try self.addHeader("Sec-Ch-Prefers-Color-Scheme", if (lp.fingerprint.prefers_dark_color_scheme) "dark" else "light", .{ .source = .fixed });
+
+        // These four are NOT in the preload: they appear only once Google's
+        // response has asked for them via Accept-CH, which on the same capture
+        // lists Downlink, RTT, Sec-CH-UA-Form-Factors and Sec-CH-UA-Full-Version
+        // among others. A cold Chrome request carries none of them, so they
+        // stay gated on having an initiator.
+        if (self.initiator != .none) {
+            try self.addHeader("Rtt", "100", .{ .source = .fixed });
+            try self.addHeader("Downlink", "1.75", .{ .source = .fixed });
+            try self.addHeader("Sec-Ch-Ua-Full-Version", quoted_full_version, .{ .source = .fixed });
+            try self.addHeader("Sec-Ch-Ua-Form-Factors", "\"Desktop\"", .{ .source = .fixed });
+        }
+
+        try self.addHeader("X-Browser-Channel", lp.fingerprint.chrome_channel, .{ .source = .fixed });
+        try self.addHeader("X-Browser-Year", lp.fingerprint.chrome_year, .{ .source = .fixed });
+        try self.addHeader("X-Browser-Validation", lp.fingerprint.chrome_validation, .{ .source = .fixed });
+        try self.addHeader("X-Browser-Copyright", lp.fingerprint.chrome_copyright, .{ .source = .fixed });
+        try self.addHeader("X-Client-Data", lp.fingerprint.chrome_client_data, .{ .source = .fixed });
+    }
+
     // The client's baseline headers, added to every request at creation.
     fn seedHeaders(self: *Transfer) !void {
         for (self.client.baselineHeaders()) |hdr| {
             try self.addHeader(hdr.name, hdr.value, .{ .source = hdr.source });
         }
 
+        try self.seedGoogleChromeHeaders();
         try self.seedFetchMetadata();
 
         // --http-header extras; setHeader so a same-name header (e.g.
@@ -3716,6 +3790,58 @@ pub const Transfer = struct {
         for (self.client.network.config.httpHeaders()) |hdr| {
             try self.setHeader(hdr.name, hdr.value, .{ .source = .cli });
         }
+    }
+
+    fn chromeHeaderRank(name: []const u8) u8 {
+        const ordered = [_][]const u8{
+            "rtt",
+            "downlink",
+            "sec-ch-ua",
+            "sec-ch-ua-mobile",
+            "sec-ch-ua-full-version",
+            "sec-ch-ua-platform",
+            // Chrome 151 emits Accept-Language inside the client-hint
+            // cluster, immediately after Sec-Ch-Ua-Platform on a navigation,
+            // and never after Accept-Encoding. Measured against Chrome for
+            // Testing 151, headful and headless, which agree.
+            "accept-language",
+            "upgrade-insecure-requests",
+            "user-agent",
+            "accept",
+            "sec-ch-ua-arch",
+            "sec-ch-ua-platform-version",
+            "sec-ch-ua-model",
+            "sec-ch-ua-bitness",
+            "sec-ch-ua-wow64",
+            "sec-ch-ua-full-version-list",
+            "sec-ch-ua-form-factors",
+            "sec-ch-prefers-color-scheme",
+            "x-browser-channel",
+            "x-browser-year",
+            "x-browser-validation",
+            "x-browser-copyright",
+            "x-client-data",
+            "sec-fetch-site",
+            "sec-fetch-mode",
+            "sec-fetch-user",
+            "sec-fetch-dest",
+            "accept-encoding",
+            "priority",
+        };
+        for (ordered, 0..) |candidate, i| {
+            if (std.ascii.eqlIgnoreCase(name, candidate)) return @intCast(i);
+        }
+        return @intCast(ordered.len);
+    }
+
+    fn orderChromeHeaders(self: *Transfer) void {
+        // Stable sorting preserves author/CDP ordering for headers Chromium's
+        // navigation template does not prescribe.
+        std.mem.sort(RequestHeader, self.req_headers.items, {}, struct {
+            fn lessThan(_: void, a: RequestHeader, b: RequestHeader) bool {
+                return chromeHeaderRank(a.name) < chromeHeaderRank(b.name);
+            }
+        }.lessThan);
     }
 
     // CDP Fetch.continueRequest: the intercepting client supplies the
@@ -3778,7 +3904,7 @@ pub const Transfer = struct {
                 return @intCast(chunk_len);
             }
 
-            if (transfer.req.headers_only == false) {
+            if (!transfer.req.headers_only and !transfer.req.streaming) {
                 if (transfer.getContentLength()) |cl| {
                     if (cl > transfer.client.max_response_size) {
                         res.callback_error = error.ResponseTooLarge;
@@ -4688,6 +4814,74 @@ fn testTransfer(arena: *lp.Arena) Transfer {
         .id = 1,
         .start_time = 0,
     };
+}
+
+test "HttpClient: Google Chrome navigation headers are origin scoped" {
+    try testing.expect(Transfer.isGoogleHostname("google.com"));
+    try testing.expect(Transfer.isGoogleHostname("www.google.com"));
+    try testing.expect(Transfer.isGoogleHostname("WWW.GOOGLE.COM"));
+    try testing.expect(!Transfer.isGoogleHostname("evilgoogle.com"));
+    try testing.expect(!Transfer.isGoogleHostname("google.com.example"));
+
+    var pool = ArenaPool.init(testing.allocator, .{});
+    defer pool.deinit();
+
+    const arena = try pool.acquire(.small, "test");
+    defer arena.release();
+
+    var transfer = testTransfer(arena);
+    transfer.req.url = "https://www.google.com/search?q=lightpanda";
+    try transfer.seedGoogleChromeHeaders();
+
+    // Cold address-bar/CLI navigation (initiator == .none). Chrome ships an
+    // Accept-CH preload for Google origins, so a fresh-profile cold request
+    // already carries the high-entropy hints -- captured from Google Chrome
+    // 151.0.7922.138 with a throwaway profile via CDP. They must be PRESENT.
+    try testing.expectEqual("\"arm\"", transfer.findRequestHeader("sec-ch-ua-arch").?);
+    try testing.expect(transfer.findRequestHeader("sec-ch-ua-platform-version") != null);
+    try testing.expect(transfer.findRequestHeader("sec-ch-ua-model") != null);
+    try testing.expect(transfer.findRequestHeader("sec-ch-ua-bitness") != null);
+    try testing.expect(transfer.findRequestHeader("sec-ch-ua-wow64") != null);
+    try testing.expectEqual(lp.fingerprint.sec_ch_ua_full_version_list, transfer.findRequestHeader("sec-ch-ua-full-version-list").?);
+    try testing.expect(transfer.findRequestHeader("sec-ch-prefers-color-scheme") != null);
+    try testing.expectEqual("stable", transfer.findRequestHeader("x-browser-channel").?);
+    try testing.expectEqual("2026", transfer.findRequestHeader("x-browser-year").?);
+    try testing.expectEqual("1Arh1ZvtrDP7uKgGbOIMaEixXdo=", transfer.findRequestHeader("x-browser-validation").?);
+    try testing.expectEqual("Copyright 2026 Google LLC. All Rights Reserved.", transfer.findRequestHeader("x-browser-copyright").?);
+    try testing.expectEqual("CPWDywE=", transfer.findRequestHeader("x-client-data").?);
+    try testing.expectEqual(null, transfer.findRequestHeader("rtt"));
+    try testing.expectEqual(null, transfer.findRequestHeader("downlink"));
+    try testing.expectEqual(null, transfer.findRequestHeader("sec-ch-ua-full-version"));
+    try testing.expectEqual(null, transfer.findRequestHeader("sec-ch-ua-form-factors"));
+
+    var accepted_hints = testTransfer(arena);
+    accepted_hints.req.url = "https://www.google.com/search?q=lightpanda&sei=token";
+    accepted_hints.initiator = .{ .url = "https://www.google.com/search?q=lightpanda" };
+    try accepted_hints.seedGoogleChromeHeaders();
+    try testing.expectEqual("100", accepted_hints.findRequestHeader("rtt").?);
+    try testing.expectEqual("1.75", accepted_hints.findRequestHeader("downlink").?);
+    try testing.expectEqual("\"151.0.7922.138\"", accepted_hints.findRequestHeader("sec-ch-ua-full-version").?);
+    try testing.expectEqual("\"Desktop\"", accepted_hints.findRequestHeader("sec-ch-ua-form-factors").?);
+    // Once Accept-CH has been seen (initiator != .none), the high-entropy
+    // hints ride along exactly as a real Chrome sends them on the retry.
+    try testing.expectEqual("\"arm\"", accepted_hints.findRequestHeader("sec-ch-ua-arch").?);
+    try testing.expectEqual("\"14.8.1\"", accepted_hints.findRequestHeader("sec-ch-ua-platform-version").?);
+    try testing.expectEqual("\"\"", accepted_hints.findRequestHeader("sec-ch-ua-model").?);
+    try testing.expectEqual("\"64\"", accepted_hints.findRequestHeader("sec-ch-ua-bitness").?);
+    try testing.expectEqual("?0", accepted_hints.findRequestHeader("sec-ch-ua-wow64").?);
+    try testing.expectEqual(lp.fingerprint.sec_ch_ua_full_version_list, accepted_hints.findRequestHeader("sec-ch-ua-full-version-list").?);
+    try testing.expectEqual("dark", accepted_hints.findRequestHeader("sec-ch-prefers-color-scheme").?);
+
+    var unrelated = testTransfer(arena);
+    unrelated.req.url = "https://google.com.example/search";
+    try unrelated.seedGoogleChromeHeaders();
+    try testing.expectEqual(@as(usize, 0), unrelated.req_headers.items.len);
+
+    var subresource = testTransfer(arena);
+    subresource.req.url = "https://www.google.com/logo.png";
+    subresource.req.resource_type = .image;
+    try subresource.seedGoogleChromeHeaders();
+    try testing.expectEqual(@as(usize, 0), subresource.req_headers.items.len);
 }
 
 test "HttpClient: Transfer.setHeader replaces by case-insensitive name" {

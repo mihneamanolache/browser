@@ -1,0 +1,1250 @@
+{
+ "AnimationTimeline": {
+  "ctorArity": 0,
+  "members": {
+   "currentTime": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "duration": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "AnimationTimeline"
+ },
+ "AudioSinkInfo": {
+  "ctorArity": 0,
+  "members": {
+   "type": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "AudioSinkInfo"
+ },
+ "AuthenticatorResponse": {
+  "ctorArity": 0,
+  "members": {
+   "clientDataJSON": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "AuthenticatorResponse"
+ },
+ "BackgroundFetchRecord": {
+  "ctorArity": 0,
+  "members": {
+   "request": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "responseReady": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "BackgroundFetchRecord"
+ },
+ "BluetoothUUID": {
+  "ctorArity": 0,
+  "members": {},
+  "statics": [
+   "canonicalUUID",
+   "getCharacteristic",
+   "getDescriptor",
+   "getService"
+  ],
+  "toStringTag": "BluetoothUUID",
+  "staticSpecs": {
+   "canonicalUUID": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "getCharacteristic": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "getDescriptor": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "getService": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  }
+ },
+ "CSSStyleValue": {
+  "ctorArity": 0,
+  "members": {
+   "toString": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [
+   "parse",
+   "parseAll"
+  ],
+  "toStringTag": "CSSStyleValue",
+  "staticSpecs": {
+   "parse": {
+    "kind": "function",
+    "arity": 2,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "parseAll": {
+    "kind": "function",
+    "arity": 2,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  }
+ },
+ "Credential": {
+  "ctorArity": 0,
+  "members": {
+   "id": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "type": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [
+   "isConditionalMediationAvailable"
+  ],
+  "toStringTag": "Credential",
+  "staticSpecs": {
+   "isConditionalMediationAvailable": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  }
+ },
+ "CropTarget": {
+  "ctorArity": 0,
+  "members": {},
+  "statics": [
+   "fromElement"
+  ],
+  "toStringTag": "CropTarget",
+  "staticSpecs": {
+   "fromElement": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  }
+ },
+ "DOMRectList": {
+  "ctorArity": 0,
+  "members": {
+   "item": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "length": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "DOMRectList"
+ },
+ "DelegatedInkTrailPresenter": {
+  "ctorArity": 0,
+  "members": {
+   "presentationArea": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "updateInkTrailStartPoint": {
+    "kind": "function",
+    "arity": 2,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "DelegatedInkTrailPresenter"
+ },
+ "External": {
+  "ctorArity": 0,
+  "members": {
+   "AddSearchProvider": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "IsSearchProviderInstalled": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "External"
+ },
+ "FencedFrameConfig": {
+  "ctorArity": 0,
+  "members": {
+   "setSharedStorageContext": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "FencedFrameConfig"
+ },
+ "FetchLaterResult": {
+  "ctorArity": 0,
+  "members": {
+   "activated": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "FetchLaterResult"
+ },
+ "FragmentDirective": {
+  "ctorArity": 0,
+  "members": {},
+  "statics": [],
+  "toStringTag": "FragmentDirective"
+ },
+ "GPUBindGroup": {
+  "ctorArity": 0,
+  "members": {
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUBindGroup"
+ },
+ "GPUBindGroupLayout": {
+  "ctorArity": 0,
+  "members": {
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUBindGroupLayout"
+ },
+ "GPUCommandBuffer": {
+  "ctorArity": 0,
+  "members": {
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUCommandBuffer"
+ },
+ "GPUCompilationInfo": {
+  "ctorArity": 0,
+  "members": {
+   "messages": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUCompilationInfo"
+ },
+ "GPUComputePipeline": {
+  "ctorArity": 0,
+  "members": {
+   "getBindGroupLayout": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUComputePipeline"
+ },
+ "GPUDeviceLostInfo": {
+  "ctorArity": 0,
+  "members": {
+   "message": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "reason": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUDeviceLostInfo"
+ },
+ "GPUError": {
+  "ctorArity": 0,
+  "members": {
+   "message": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUError"
+ },
+ "GPUExternalTexture": {
+  "ctorArity": 0,
+  "members": {
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUExternalTexture"
+ },
+ "GPUPipelineLayout": {
+  "ctorArity": 0,
+  "members": {
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUPipelineLayout"
+ },
+ "GPURenderBundle": {
+  "ctorArity": 0,
+  "members": {
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPURenderBundle"
+ },
+ "GPURenderPipeline": {
+  "ctorArity": 0,
+  "members": {
+   "getBindGroupLayout": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPURenderPipeline"
+ },
+ "GPUSampler": {
+  "ctorArity": 0,
+  "members": {
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUSampler"
+ },
+ "GPUShaderModule": {
+  "ctorArity": 0,
+  "members": {
+   "getCompilationInfo": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUShaderModule"
+ },
+ "GPUTextureView": {
+  "ctorArity": 0,
+  "members": {
+   "label": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "GPUTextureView"
+ },
+ "IdentityProvider": {
+  "ctorArity": 0,
+  "members": {},
+  "statics": [
+   "close",
+   "getUserInfo",
+   "resolve"
+  ],
+  "toStringTag": "IdentityProvider",
+  "staticSpecs": {
+   "close": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "getUserInfo": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "resolve": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  }
+ },
+ "ImageBitmapRenderingContext": {
+  "ctorArity": 0,
+  "members": {
+   "canvas": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "transferFromImageBitmap": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "ImageBitmapRenderingContext"
+ },
+ "LaunchParams": {
+  "ctorArity": 0,
+  "members": {
+   "files": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "targetURL": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "LaunchParams"
+ },
+ "LaunchQueue": {
+  "ctorArity": 0,
+  "members": {
+   "setConsumer": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "LaunchQueue"
+ },
+ "Lock": {
+  "ctorArity": 0,
+  "members": {
+   "mode": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "name": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "Lock"
+ },
+ "MediaSourceHandle": {
+  "ctorArity": 0,
+  "members": {},
+  "statics": [],
+  "toStringTag": "MediaSourceHandle"
+ },
+ "NavigationPrecommitController": {
+  "ctorArity": 0,
+  "members": {
+   "addHandler": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "redirect": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "NavigationPrecommitController"
+ },
+ "NotRestoredReasonDetails": {
+  "ctorArity": 0,
+  "members": {
+   "reason": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "toJSON": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "NotRestoredReasonDetails"
+ },
+ "PaymentManager": {
+  "ctorArity": 0,
+  "members": {
+   "enableDelegations": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "userHint": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "PaymentManager"
+ },
+ "PresentationReceiver": {
+  "ctorArity": 0,
+  "members": {
+   "connectionList": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "PresentationReceiver"
+ },
+ "PushSubscriptionOptions": {
+  "ctorArity": 0,
+  "members": {
+   "applicationServerKey": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "userVisibleOnly": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "PushSubscriptionOptions"
+ },
+ "RTCCertificate": {
+  "ctorArity": 0,
+  "members": {
+   "expires": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "getFingerprints": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "RTCCertificate"
+ },
+ "ReportBody": {
+  "ctorArity": 0,
+  "members": {
+   "toJSON": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "ReportBody"
+ },
+ "RestrictionTarget": {
+  "ctorArity": 0,
+  "members": {},
+  "statics": [
+   "fromElement"
+  ],
+  "toStringTag": "RestrictionTarget",
+  "staticSpecs": {
+   "fromElement": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  }
+ },
+ "SVGAnimatedAngle": {
+  "ctorArity": 0,
+  "members": {
+   "animVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "baseVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "SVGAnimatedAngle"
+ },
+ "SVGAnimatedBoolean": {
+  "ctorArity": 0,
+  "members": {
+   "animVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "baseVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "SVGAnimatedBoolean"
+ },
+ "SVGAnimatedInteger": {
+  "ctorArity": 0,
+  "members": {
+   "animVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "baseVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": true,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "SVGAnimatedInteger"
+ },
+ "SVGAnimatedLengthList": {
+  "ctorArity": 0,
+  "members": {
+   "animVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "baseVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "SVGAnimatedLengthList"
+ },
+ "SVGAnimatedNumberList": {
+  "ctorArity": 0,
+  "members": {
+   "animVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "baseVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "SVGAnimatedNumberList"
+ },
+ "SVGAnimatedRect": {
+  "ctorArity": 0,
+  "members": {
+   "animVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "baseVal": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "SVGAnimatedRect"
+ },
+ "SharedStorageModifierMethod": {
+  "ctorArity": 0,
+  "members": {},
+  "statics": [],
+  "toStringTag": "SharedStorageModifierMethod"
+ },
+ "SyncManager": {
+  "ctorArity": 0,
+  "members": {
+   "getTags": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "register": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "SyncManager"
+ },
+ "TextTrackCueList": {
+  "ctorArity": 0,
+  "members": {
+   "getCueById": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "length": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "TextTrackCueList"
+ },
+ "TouchList": {
+  "ctorArity": 0,
+  "members": {
+   "item": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "length": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "TouchList"
+ },
+ "TrustedHTML": {
+  "ctorArity": 0,
+  "members": {
+   "toJSON": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "toString": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "TrustedHTML"
+ },
+ "TrustedScript": {
+  "ctorArity": 0,
+  "members": {
+   "toJSON": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "toString": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "TrustedScript"
+ },
+ "TrustedScriptURL": {
+  "ctorArity": 0,
+  "members": {
+   "toJSON": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "toString": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "TrustedScriptURL"
+ },
+ "Viewport": {
+  "ctorArity": 0,
+  "members": {
+   "segments": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "Viewport"
+ },
+ "WebTransportBidirectionalStream": {
+  "ctorArity": 0,
+  "members": {
+   "readable": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "writable": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "WebTransportBidirectionalStream"
+ },
+ "Worklet": {
+  "ctorArity": 0,
+  "members": {
+   "addModule": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "Worklet"
+ },
+ "XRAnchor": {
+  "ctorArity": 0,
+  "members": {
+   "anchorSpace": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "delete": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "XRAnchor"
+ },
+ "XRCamera": {
+  "ctorArity": 0,
+  "members": {
+   "height": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "width": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "XRCamera"
+ },
+ "XRDOMOverlayState": {
+  "ctorArity": 0,
+  "members": {
+   "type": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "XRDOMOverlayState"
+ },
+ "XRHitTestResult": {
+  "ctorArity": 0,
+  "members": {
+   "createAnchor": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   },
+   "getPose": {
+    "kind": "function",
+    "arity": 1,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "XRHitTestResult"
+ },
+ "XRHitTestSource": {
+  "ctorArity": 0,
+  "members": {
+   "cancel": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "XRHitTestSource"
+ },
+ "XRPose": {
+  "ctorArity": 0,
+  "members": {
+   "emulatedPosition": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "transform": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "XRPose"
+ },
+ "XRSubImage": {
+  "ctorArity": 0,
+  "members": {
+   "viewport": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "XRSubImage"
+ },
+ "XRTransientInputHitTestResult": {
+  "ctorArity": 0,
+  "members": {
+   "inputSource": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   },
+   "results": {
+    "kind": "accessor",
+    "get": true,
+    "set": false,
+    "e": true,
+    "c": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "XRTransientInputHitTestResult"
+ },
+ "XRTransientInputHitTestSource": {
+  "ctorArity": 0,
+  "members": {
+   "cancel": {
+    "kind": "function",
+    "arity": 0,
+    "e": true,
+    "c": true,
+    "w": true
+   }
+  },
+  "statics": [],
+  "toStringTag": "XRTransientInputHitTestSource"
+ }
+}

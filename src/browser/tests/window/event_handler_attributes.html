@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<script src="../testing.js"></script>
+<body></body>
+
+<script id="event_handler_attributes_exist">
+{
+  // Chrome 151 exposes 125 onXxx accessors on window; 13 of them dispatch
+  // here and the rest are inert storage. A sample across the generated block.
+  // Every name here must be one Chrome actually puts on *window* -- an
+  // earlier draft asserted onvisibilitychange, which Chrome exposes on
+  // Document only, so the test failed against a correct implementation.
+  const sample = ['onabort', 'onanimationend', 'onauxclick', 'onbeforeunload',
+                  'oncontextmenu', 'ondragstart', 'oninput', 'onkeydown',
+                  'onmouseover', 'onoffline', 'ononline', 'onpointerdown',
+                  'onstorage', 'ontransitionend', 'onpagehide', 'onwheel'];
+  for (const n of sample) {
+    testing.expectEqual(true, n in window);
+    testing.expectEqual(true, Object.getOwnPropertyNames(window).includes(n));
+  }
+}
+</script>
+
+<script id="event_handler_attributes_descriptor">
+{
+  // Measured in Chrome: accessor, enumerable, configurable. Every one of the
+  // 112 carries the identical descriptor.
+  const d = Object.getOwnPropertyDescriptor(window, 'onanimationend');
+  testing.expectEqual('undefined', typeof d.value);
+  testing.expectEqual('function', typeof d.get);
+  testing.expectEqual('function', typeof d.set);
+  testing.expectEqual(true, d.enumerable);
+  testing.expectEqual(true, d.configurable);
+}
+</script>
+
+<script id="event_handler_attributes_roundtrip">
+{
+  testing.expectEqual(null, window.onanimationend);
+  const fn = function () {};
+  window.onanimationend = fn;
+  testing.expectEqual(fn, window.onanimationend);
+
+  // Assigning a non-function clears it, per the IDL event-handler type.
+  window.onanimationend = 42;
+  testing.expectEqual(null, window.onanimationend);
+
+  window.onanimationend = fn;
+  window.onanimationend = null;
+  testing.expectEqual(null, window.onanimationend);
+}
+</script>
+
+<script id="event_handler_attributes_are_independent">
+{
+  const a = function () {};
+  const b = function () {};
+  window.onwheel = a;
+  window.onstorage = b;
+  testing.expectEqual(a, window.onwheel);
+  testing.expectEqual(b, window.onstorage);
+  // and must not disturb the hand-written dispatching handlers
+  const c = function () {};
+  window.onload = c;
+  testing.expectEqual(c, window.onload);
+  testing.expectEqual(a, window.onwheel);
+}
+</script>

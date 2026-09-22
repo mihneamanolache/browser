@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<script src="../testing.js"></script>
+<body></body>
+
+<script id="storage_access_shape">
+{
+  // Shape measured from Chrome 151 on a top-level document: all three live
+  // on Document.prototype as enumerable, configurable, writable data
+  // properties, with arities 0, 0 and 1.
+  testing.expectEqual('function', typeof document.hasStorageAccess);
+  testing.expectEqual('function', typeof document.requestStorageAccess);
+  testing.expectEqual('function', typeof document.requestStorageAccessFor);
+
+  testing.expectEqual(0, document.hasStorageAccess.length);
+  testing.expectEqual(0, document.requestStorageAccess.length);
+  testing.expectEqual(1, document.requestStorageAccessFor.length);
+
+  testing.expectEqual(true, Document.prototype.hasOwnProperty('hasStorageAccess'));
+  const d = Object.getOwnPropertyDescriptor(Document.prototype, 'hasStorageAccess');
+  testing.expectEqual(true, d.enumerable);
+  testing.expectEqual(true, d.configurable);
+  testing.expectEqual(true, d.writable);
+}
+</script>
+
+<script id="storage_access_returns_promise">
+{
+  testing.expectEqual(true, document.hasStorageAccess() instanceof Promise);
+}
+</script>
+
+<script id="storage_access_resolves_true">
+// A top-level same-origin document always has unpartitioned cookie access,
+// which is the only case this browser runs in. Chrome resolves true here.
+document.hasStorageAccess().then(function (granted) {
+  testing.expectEqual(true, granted);
+});
+</script>

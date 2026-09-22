@@ -48,8 +48,10 @@
   // Surprisingly, these don't fail but silently ignored.
   clearTimeout(-1);
   clearInterval(-2);
-  clearImmediate(-3);
-  testing.expectEqual(true, true);
+  testing.expectEqual('undefined', typeof clearImmediate);
+  testing.expectEqual('undefined', typeof setImmediate);
+  testing.expectEqual(0, clearTimeout.length);
+  testing.expectEqual(0, clearInterval.length);
 </script>
 
 <script id=setTimeout-string-handler>
@@ -80,4 +82,3 @@
   }
   testing.expectEqual(true, threw);
 </script>
-

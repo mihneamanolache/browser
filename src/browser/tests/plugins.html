@@ -29,6 +29,13 @@
   // Every plugin exposes the one shared MIME type list.
   testing.expectEqual(true, navigator.mimeTypes[0] === navigator.plugins[0][0]);
   testing.expectEqual(true, navigator.plugins[0][0] === navigator.plugins[4][0]);
+
+  // Legacy platform collections expose their indexed entries as enumerable
+  // own properties. Fingerprinters use Object.keys(plugin), not only the
+  // iterator, when serializing the frozen PDF plugin graph.
+  testing.expectEqual('0,1,2,3,4', Object.keys(navigator.plugins).join(','));
+  testing.expectEqual('0,1', Object.keys(navigator.plugins[0]).join(','));
+  testing.expectEqual('0,1', Object.keys(navigator.mimeTypes).join(','));
 </script>
 
 <script id=plugins_accessors>

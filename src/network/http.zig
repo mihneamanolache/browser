@@ -569,6 +569,8 @@ pub const Connection = struct {
         const v: libcurl.CurlHttpVersion = switch (version) {
             .auto => .none,
             .@"1.1" => .v1_1,
+            .@"3" => .v3,
+            .@"3-only" => .v3_only,
         };
         try libcurl.curl_easy_setopt(self._easy, .http_version, v);
     }

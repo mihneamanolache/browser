@@ -265,6 +265,20 @@ pub const wow64 = false;
 pub const mobile = false;
 pub const form_factors = [_][]const u8{"Desktop"};
 
+/// The local reference Chrome was captured with macOS dark appearance.
+/// Keep the HTTP client hint and `matchMedia()` on the same value.
+pub const prefers_dark_color_scheme = true;
+
+/// Chrome installation headers observed on a fresh stable Chrome 151
+/// profile. Google consumes these on its own origins; they are deliberately
+/// not sent to the rest of the web.
+pub const chrome_channel = "stable";
+pub const chrome_year = "2026";
+pub const chrome_validation = "1Arh1ZvtrDP7uKgGbOIMaEixXdo=";
+pub const chrome_copyright = "Copyright 2026 Google LLC. All Rights Reserved.";
+/// A stable Chrome variation seed captured from the same fresh profile.
+pub const chrome_client_data = "CPWDywE=";
+
 /// `"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"`
 pub const sec_ch_ua: [:0]const u8 = brandListHeader("version");
 
@@ -401,7 +415,7 @@ pub const battery = struct {
 
 pub const connection = struct {
     pub const effective_type = "4g";
-    pub const downlink: f64 = 1.5;
+    pub const downlink: f64 = 1.75;
     pub const rtt: u32 = 100;
     pub const save_data = false;
     /// Chrome reports "unknown" for `type` on desktop unless the platform

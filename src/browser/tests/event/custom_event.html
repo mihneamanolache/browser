@@ -95,6 +95,14 @@
 }
 </script>
 
+<script id=createEventTouchEventDesktop>
+  // Chrome desktop exposes the TouchEvent constructor but does not enable
+  // the legacy document.createEvent("TouchEvent") path without touch input.
+  let threw = false;
+  try { document.createEvent('TouchEvent'); } catch (e) { threw = e.name === 'NotSupportedError'; }
+  testing.expectEqual(true, threw);
+</script>
+
 <script id=customEventInheritance>
 {
   const event = new CustomEvent('inherit-test');

@@ -114,6 +114,7 @@ pub const JsApi = struct {
         pub var class_id: bridge.ClassId = undefined;
     };
 
+    pub const constructor = bridge.constructor(ReadableStreamDefaultReader.init, .{});
     pub const read = bridge.function(ReadableStreamDefaultReader.read, .{});
     pub const cancel = bridge.function(ReadableStreamDefaultReader.cancel, .{});
     pub const releaseLock = bridge.function(ReadableStreamDefaultReader.releaseLock, .{});

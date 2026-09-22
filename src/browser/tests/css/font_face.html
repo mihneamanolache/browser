@@ -21,10 +21,10 @@
 }
 </script>
 
-<script id="status_is_loaded">
+<script id="status_starts_unloaded">
 {
     const face = new FontFace("F", "url(f.woff)");
-    testing.expectEqual("loaded", face.status);
+    testing.expectEqual("unloaded", face.status);
 }
 </script>
 
@@ -32,13 +32,39 @@
 {
     const face = new FontFace("F", "url(f.woff)");
     testing.expectTrue(face.loaded instanceof Promise);
+    testing.expectTrue(face.loaded === face.loaded);
 }
 </script>
 
 <script id="load_returns_promise">
 {
-    const face = new FontFace("F", "url(f.woff)");
-    testing.expectTrue(face.load() instanceof Promise);
+    const face = new FontFace("F", "local(Arial)");
+    const loaded = face.loaded;
+    testing.expectTrue(face.load() === loaded);
+}
+</script>
+
+<script id="load_resolves_to_font_face">
+{
+    const face = new FontFace("F", "local(Arial)");
+    face.load().then(value => testing.expectTrue(value === face));
+    testing.expectEqual("loaded", face.status);
+}
+</script>
+
+<script id="missing_local_rejects">
+{
+    const face = new FontFace("F", "local(NoSuchFontXYZ)");
+    face.load().catch(error => testing.expectEqual("NetworkError", error.name));
+    testing.expectEqual("error", face.status);
+}
+</script>
+
+<script id="local_source_fallback">
+{
+    const face = new FontFace("Fallback", "local(NoSuchFontXYZ), local(Arial)");
+    face.load().then(value => testing.expectTrue(value === face));
+    testing.expectEqual("loaded", face.status);
 }
 </script>
 
@@ -60,4 +86,73 @@
     const result = document.fonts.add(face);
     testing.expectTrue(result === document.fonts);
 }
+</script>
+
+<script id="url_font_loads_real_bytes" type="module">
+  const state = await testing.async();
+  const face = new FontFace('Bundled', 'url(/font_valid.ttf)');
+  const loaded = face.loaded;
+  const promise = face.load();
+  testing.expectTrue(loaded === promise);
+  testing.expectEqual('loading', face.status);
+  const result = await promise;
+  state.resolve();
+  await state.done(() => {
+    testing.expectTrue(result === face);
+    testing.expectEqual('loaded', face.status);
+  });
+</script>
+
+<script id="invalid_url_font_rejects" type="module">
+  const state = await testing.async();
+  const face = new FontFace('Invalid', 'url(data:font/woff2;base64,AAAA)');
+  const promise = face.load();
+  testing.expectEqual('loading', face.status);
+  const error = await promise.then(() => null, e => e);
+  state.resolve();
+  await state.done(() => {
+    testing.expectEqual('NetworkError', error.name);
+    testing.expectEqual('error', face.status);
+  });
+</script>
+
+<script id="invalid_url_font_falls_back_to_local" type="module">
+  const state = await testing.async();
+  const face = new FontFace('Recovered', 'url(data:font/woff2;base64,AAAA), local(Arial)');
+  const promise = face.load();
+  testing.expectEqual('loading', face.status);
+  const result = await promise;
+  state.resolve();
+  await state.done(() => {
+    testing.expectTrue(result === face);
+    testing.expectEqual('loaded', face.status);
+  });
+</script>
+
+<script id="cross_origin_font_requires_cors" type="module">
+  const state = await testing.async();
+  const face = new FontFace('CrossOrigin', 'url(http://localhost:9582/font_valid.ttf)');
+  const promise = face.load();
+  testing.expectEqual('loading', face.status);
+  const error = await promise.then(() => null, e => e);
+  state.resolve();
+  await state.done(() => {
+    testing.expectEqual('NetworkError', error.name);
+    testing.expectEqual('error', face.status);
+  });
+</script>
+
+<!-- font-fixture.woff2 is a small subset of the bundled DejaVuSans.ttf,
+     generated with pyftsubset --text='ABCabc012' --flavor=woff2. -->
+<script id="woff2_font_loads_real_bytes" type="module">
+  const state = await testing.async();
+  const face = new FontFace('WOFF2Fixture', 'url(font-fixture.woff2)');
+  const promise = face.load();
+  testing.expectEqual('loading', face.status);
+  const result = await promise;
+  state.resolve();
+  await state.done(() => {
+    testing.expectTrue(result === face);
+    testing.expectEqual('loaded', face.status);
+  });
 </script>

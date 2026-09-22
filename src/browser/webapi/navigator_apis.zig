@@ -27,14 +27,16 @@
 //! page had learned it was not talking to Chrome. Anything that enumerates
 //! `navigator` learns far more than that.
 //!
-//! WHY THEY REJECT INSTEAD OF PRETENDING
+//! WHY MOST CAPABILITY REQUESTS REJECT INSTEAD OF PRETENDING
 //!
 //! Every method here fails the way a real Chrome fails when it has no
 //! permission and no hardware: a rejected promise, an empty list. That is a
 //! state Chrome is in constantly, so it is unremarkable. Resolving with an
-//! invented GPU adapter or a fabricated USB device list would be a much
-//! larger claim and a much easier one to catch -- the follow-up call would
-//! have to keep the story straight, and it cannot.
+//! fabricated USB device list would be a much larger claim and a much easier
+//! one to catch -- the follow-up call would have to keep the story straight.
+//! WebGPU is the exception: the selected fingerprint profile already claims
+//! an exact GPU, so its adapter metadata, features and limits must tell the
+//! same story. Device/queue execution remains unsupported until it can do so.
 //!
 //! So these are presence and shape, honestly empty. `navigator.usb` is a
 //! `USB` whose `getDevices()` resolves to nothing, which is exactly what
@@ -46,9 +48,17 @@
 //! Chrome 151, not off a spec.
 
 const std = @import("std");
+const lp = @import("lightpanda");
 
 const js = @import("../js/js.zig");
 const Execution = js.Execution;
+const Frame = @import("../Frame.zig");
+const URL = @import("../URL.zig");
+const EventTarget = @import("EventTarget.zig");
+const MessageEvent = @import("event/MessageEvent.zig");
+const ServiceWorker = @import("ServiceWorker.zig");
+const ServiceWorkerRegistration = @import("ServiceWorkerRegistration.zig");
+const ServiceWorkerGlobalScope = @import("ServiceWorkerGlobalScope.zig");
 
 pub fn registerTypes() []const type {
     return &.{
@@ -57,12 +67,21 @@ pub fn registerTypes() []const type {
         CredentialsContainer,
         DevicePosture,
         GPU,
+        GPUAdapter,
+        GPUAdapterInfo,
+        GPUSupportedFeatures,
+        GPUSupportedFeatures.KeyIterator,
+        GPUSupportedFeatures.ValueIterator,
+        GPUSupportedFeatures.EntryIterator,
+        GPUSupportedLimits,
         HID,
         Ink,
         LockManager,
         NavigatorLogin,
         NavigatorManagedData,
         MediaCapabilities,
+        MediaDeviceInfo,
+        InputDeviceInfo,
         MediaDevices,
         MediaSession,
         Presentation,
@@ -74,6 +93,10 @@ pub fn registerTypes() []const type {
         USB,
         VirtualKeyboard,
         WakeLock,
+        WGSLLanguageFeatures,
+        WGSLLanguageFeatures.KeyIterator,
+        WGSLLanguageFeatures.ValueIterator,
+        WGSLLanguageFeatures.EntryIterator,
         DeprecatedStorageQuota,
         WindowControlsOverlay,
         XRSystem,
@@ -84,6 +107,124 @@ pub fn registerTypes() []const type {
 /// an array rather than to an empty string, which is what a bare `&[_]u8{}`
 /// would become.
 const no_items: []const []const u8 = &.{};
+
+const wgsl_language_features: []const []const u8 = &.{
+    "packed_4x8_integer_dot_product",
+    "subgroup_uniformity",
+    "immediate_address_space",
+    "linear_indexing",
+    "subgroup_id",
+    "readonly_and_readwrite_storage_textures",
+    "unrestricted_pointer_parameters",
+    "texture_and_sampler_let",
+    "pointer_composite_access",
+    "uniform_buffer_standard_layout",
+};
+
+const gpu_adapter_features: []const []const u8 = &.{
+    "depth32float-stencil8",
+    "rg11b10ufloat-renderable",
+    "bgra8unorm-storage",
+    "texture-formats-tier1",
+    "texture-compression-bc",
+    "dual-source-blending",
+    "core-features-and-limits",
+    "float32-filterable",
+    "indirect-first-instance",
+    "texture-compression-astc-sliced-3d",
+    "float32-blendable",
+    "texture-compression-astc",
+    "texture-compression-etc2",
+    "depth-clip-control",
+    "texture-compression-bc-sliced-3d",
+    "timestamp-query",
+    "clip-distances",
+    "texture-formats-tier2",
+    "shader-f16",
+    "primitive-index",
+    "texture-component-swizzle",
+    "subgroups",
+};
+
+fn StringSet(comptime class_name: []const u8, comptime items: []const []const u8) type {
+    return struct {
+        _pad: bool = false,
+
+        const Self = @This();
+        const GenericIterator = @import("collections/iterator.zig").Entry;
+
+        pub const Iterator = struct {
+            index: u32 = 0,
+
+            pub const Entry = struct { []const u8, []const u8 };
+
+            pub fn next(self: *Iterator, _: *const Execution) ?Entry {
+                const index = self.index;
+                if (index >= items.len) return null;
+                self.index = index + 1;
+                return .{ items[index], items[index] };
+            }
+        };
+
+        pub const KeyIterator = GenericIterator(Iterator, "0");
+        pub const ValueIterator = GenericIterator(Iterator, "1");
+        pub const EntryIterator = GenericIterator(Iterator, null);
+
+        fn size(_: *const Self) u32 {
+            return items.len;
+        }
+
+        fn has(_: *const Self, value: []const u8) bool {
+            for (items) |item| {
+                if (std.mem.eql(u8, item, value)) return true;
+            }
+            return false;
+        }
+
+        fn keys(_: *Self, exec: *const Execution) !*KeyIterator {
+            return .init(.{}, exec);
+        }
+
+        fn values(_: *Self, exec: *const Execution) !*ValueIterator {
+            return .init(.{}, exec);
+        }
+
+        fn entries(_: *Self, exec: *const Execution) !*EntryIterator {
+            return .init(.{}, exec);
+        }
+
+        fn forEach(self: *Self, callback_: js.Function, this_: ?js.Object) !void {
+            const callback = if (this_) |this| try callback_.withThis(this) else callback_;
+            for (items) |item| {
+                var caught: js.TryCatch.Caught = .{};
+                callback.tryCall(void, .{ item, item, self }, &caught) catch {
+                    lp.log.debug(.js, "forEach callback", .{ .caught = caught, .source = class_name });
+                };
+            }
+        }
+
+        pub const JsApi = struct {
+            pub const bridge = js.Bridge(Self);
+            pub const Meta = struct {
+                pub const name = class_name;
+                pub const prototype_chain = bridge.prototypeChain();
+                pub var class_id: bridge.ClassId = undefined;
+                pub const empty_with_no_proto = true;
+            };
+
+            pub const size = bridge.accessor(Self.size, null, .{});
+            pub const entries = bridge.function(Self.entries, .{});
+            pub const forEach = bridge.function(Self.forEach, .{});
+            pub const has = bridge.function(Self.has, .{});
+            pub const keys = bridge.function(Self.keys, .{});
+            pub const values = bridge.function(Self.values, .{});
+            pub const symbol_iterator = bridge.iterator(Self.values, .{});
+        };
+    };
+}
+
+pub const WGSLLanguageFeatures = StringSet("WGSLLanguageFeatures", wgsl_language_features);
+pub const GPUSupportedFeatures = StringSet("GPUSupportedFeatures", gpu_adapter_features);
 
 /// Shared rejection for "the feature is here, the capability is not".
 fn unsupported(exec: *const Execution) js.Promise {
@@ -205,7 +346,7 @@ pub const DevicePosture = struct {
 };
 
 pub const GPU = struct {
-    _pad: bool = false,
+    _wgsl_language_features: ?*WGSLLanguageFeatures = null,
 
     /// WebGPU's canvas format is platform-fixed: bgra8unorm everywhere
     /// Chrome ships it, and it is readable without an adapter.
@@ -213,21 +354,218 @@ pub const GPU = struct {
         return "bgra8unorm";
     }
     fn requestAdapter(_: *const GPU, exec: *const Execution) !js.Promise {
-        // Chrome resolves with null when no adapter is available rather than
-        // rejecting, and callers are written for that.
-        return exec.js.local.?.resolvePromise(null);
+        // Each request returns a distinct adapter in Chrome.
+        const adapter = try exec._factory.create(GPUAdapter{});
+        return exec.js.local.?.resolvePromise(adapter);
     }
-    fn getWgslLanguageFeatures(_: *const GPU, exec: *const Execution) !js.Promise {
-        return exec.js.local.?.resolvePromise(no_items);
+
+    fn getWgslLanguageFeatures(self: *GPU, exec: *const Execution) !*WGSLLanguageFeatures {
+        if (self._wgsl_language_features) |features| return features;
+        const features = try exec._factory.create(WGSLLanguageFeatures{});
+        self._wgsl_language_features = features;
+        return features;
     }
 
     pub const JsApi = struct {
-        const M = ApiMeta(GPU, "GPU");
-        pub const bridge = M.bridge;
-        pub const Meta = M.Meta;
+        pub const bridge = js.Bridge(GPU);
+        pub const Meta = struct {
+            pub const name = "GPU";
+            pub const prototype_chain = bridge.prototypeChain();
+            pub var class_id: bridge.ClassId = undefined;
+        };
         pub const getPreferredCanvasFormat = bridge.function(GPU.getPreferredCanvasFormat, .{});
         pub const requestAdapter = bridge.function(GPU.requestAdapter, .{});
         pub const wgslLanguageFeatures = bridge.accessor(GPU.getWgslLanguageFeatures, null, .{});
+    };
+};
+
+pub const GPUAdapter = struct {
+    _features: ?*GPUSupportedFeatures = null,
+    _limits: ?*GPUSupportedLimits = null,
+    _info: ?*GPUAdapterInfo = null,
+
+    fn getFeatures(self: *GPUAdapter, exec: *const Execution) !*GPUSupportedFeatures {
+        if (self._features) |features| return features;
+        const features = try exec._factory.create(GPUSupportedFeatures{});
+        self._features = features;
+        return features;
+    }
+
+    fn getLimits(self: *GPUAdapter, exec: *const Execution) !*GPUSupportedLimits {
+        if (self._limits) |limits| return limits;
+        const limits = try exec._factory.create(GPUSupportedLimits{});
+        self._limits = limits;
+        return limits;
+    }
+
+    fn getInfo(self: *GPUAdapter, exec: *const Execution) !*GPUAdapterInfo {
+        if (self._info) |info| return info;
+        const info = try exec._factory.create(GPUAdapterInfo{});
+        self._info = info;
+        return info;
+    }
+
+    fn requestDevice(_: *const GPUAdapter, exec: *const Execution) js.Promise {
+        // Device/queue/command execution is not implemented yet. Preserve the
+        // asynchronous contract instead of inventing a half-functional device.
+        return unsupported(exec);
+    }
+
+    pub const JsApi = struct {
+        pub const bridge = js.Bridge(GPUAdapter);
+        pub const Meta = struct {
+            pub const name = "GPUAdapter";
+            pub const prototype_chain = bridge.prototypeChain();
+            pub var class_id: bridge.ClassId = undefined;
+        };
+        pub const features = bridge.accessor(GPUAdapter.getFeatures, null, .{});
+        pub const limits = bridge.accessor(GPUAdapter.getLimits, null, .{});
+        pub const info = bridge.accessor(GPUAdapter.getInfo, null, .{});
+        pub const requestDevice = bridge.function(GPUAdapter.requestDevice, .{});
+    };
+};
+
+pub const GPUAdapterInfo = struct {
+    _pad: bool = false,
+
+    fn getVendor(_: *const GPUAdapterInfo) []const u8 {
+        return switch (lp.fingerprint.machine().os) {
+            .macos => "apple",
+            .windows => if (std.mem.indexOf(u8, lp.fingerprint.machine().gpu_vendor, "NVIDIA") != null)
+                "nvidia"
+            else if (std.mem.indexOf(u8, lp.fingerprint.machine().gpu_vendor, "Intel") != null)
+                "intel"
+            else
+                "amd",
+        };
+    }
+
+    fn getArchitecture(_: *const GPUAdapterInfo) []const u8 {
+        return if (lp.fingerprint.machine().os == .macos) "metal-3" else "";
+    }
+
+    fn getEmpty(_: *const GPUAdapterInfo) []const u8 {
+        return "";
+    }
+
+    fn getSubgroupSize(_: *const GPUAdapterInfo) u32 {
+        return 32;
+    }
+
+    fn getIsFallbackAdapter(_: *const GPUAdapterInfo) bool {
+        return false;
+    }
+
+    pub const JsApi = struct {
+        pub const bridge = js.Bridge(GPUAdapterInfo);
+        pub const Meta = struct {
+            pub const name = "GPUAdapterInfo";
+            pub const prototype_chain = bridge.prototypeChain();
+            pub var class_id: bridge.ClassId = undefined;
+        };
+        pub const vendor = bridge.accessor(GPUAdapterInfo.getVendor, null, .{});
+        pub const architecture = bridge.accessor(GPUAdapterInfo.getArchitecture, null, .{});
+        pub const device = bridge.accessor(GPUAdapterInfo.getEmpty, null, .{});
+        pub const description = bridge.accessor(GPUAdapterInfo.getEmpty, null, .{});
+        pub const subgroupMinSize = bridge.accessor(GPUAdapterInfo.getSubgroupSize, null, .{});
+        pub const subgroupMaxSize = bridge.accessor(GPUAdapterInfo.getSubgroupSize, null, .{});
+        pub const isFallbackAdapter = bridge.accessor(GPUAdapterInfo.getIsFallbackAdapter, null, .{});
+    };
+};
+
+pub const GPUSupportedLimits = struct {
+    _pad: bool = false,
+
+    const values = .{
+        .maxTextureDimension1D = 16384,
+        .maxTextureDimension2D = 16384,
+        .maxTextureDimension3D = 2048,
+        .maxTextureArrayLayers = 2048,
+        .maxBindGroups = 4,
+        .maxBindGroupsPlusVertexBuffers = 24,
+        .maxBindingsPerBindGroup = 1000,
+        .maxDynamicUniformBuffersPerPipelineLayout = 10,
+        .maxDynamicStorageBuffersPerPipelineLayout = 8,
+        .maxSampledTexturesPerShaderStage = 48,
+        .maxSamplersPerShaderStage = 16,
+        .maxStorageBuffersPerShaderStage = 10,
+        .maxStorageTexturesPerShaderStage = 8,
+        .maxUniformBuffersPerShaderStage = 12,
+        .maxUniformBufferBindingSize = 65536,
+        .maxStorageBufferBindingSize = 4294967292,
+        .minUniformBufferOffsetAlignment = 256,
+        .minStorageBufferOffsetAlignment = 256,
+        .maxVertexBuffers = 8,
+        .maxBufferSize = 4294967292,
+        .maxVertexAttributes = 30,
+        .maxVertexBufferArrayStride = 2048,
+        .maxInterStageShaderVariables = 28,
+        .maxColorAttachments = 8,
+        .maxColorAttachmentBytesPerSample = 128,
+        .maxComputeWorkgroupStorageSize = 32768,
+        .maxComputeInvocationsPerWorkgroup = 1024,
+        .maxComputeWorkgroupSizeX = 1024,
+        .maxComputeWorkgroupSizeY = 1024,
+        .maxComputeWorkgroupSizeZ = 64,
+        .maxComputeWorkgroupsPerDimension = 65535,
+        .maxImmediateSize = 64,
+        .maxStorageBuffersInFragmentStage = 10,
+        .maxStorageTexturesInFragmentStage = 8,
+        .maxStorageBuffersInVertexStage = 10,
+        .maxStorageTexturesInVertexStage = 8,
+    };
+
+    fn getter(comptime name: []const u8) fn (*const GPUSupportedLimits) u64 {
+        return struct {
+            fn get(_: *const GPUSupportedLimits) u64 {
+                return @field(values, name);
+            }
+        }.get;
+    }
+
+    pub const JsApi = struct {
+        pub const bridge = js.Bridge(GPUSupportedLimits);
+        pub const Meta = struct {
+            pub const name = "GPUSupportedLimits";
+            pub const prototype_chain = bridge.prototypeChain();
+            pub var class_id: bridge.ClassId = undefined;
+        };
+        pub const maxTextureDimension1D = bridge.accessor(getter("maxTextureDimension1D"), null, .{});
+        pub const maxTextureDimension2D = bridge.accessor(getter("maxTextureDimension2D"), null, .{});
+        pub const maxTextureDimension3D = bridge.accessor(getter("maxTextureDimension3D"), null, .{});
+        pub const maxTextureArrayLayers = bridge.accessor(getter("maxTextureArrayLayers"), null, .{});
+        pub const maxBindGroups = bridge.accessor(getter("maxBindGroups"), null, .{});
+        pub const maxBindGroupsPlusVertexBuffers = bridge.accessor(getter("maxBindGroupsPlusVertexBuffers"), null, .{});
+        pub const maxBindingsPerBindGroup = bridge.accessor(getter("maxBindingsPerBindGroup"), null, .{});
+        pub const maxDynamicUniformBuffersPerPipelineLayout = bridge.accessor(getter("maxDynamicUniformBuffersPerPipelineLayout"), null, .{});
+        pub const maxDynamicStorageBuffersPerPipelineLayout = bridge.accessor(getter("maxDynamicStorageBuffersPerPipelineLayout"), null, .{});
+        pub const maxSampledTexturesPerShaderStage = bridge.accessor(getter("maxSampledTexturesPerShaderStage"), null, .{});
+        pub const maxSamplersPerShaderStage = bridge.accessor(getter("maxSamplersPerShaderStage"), null, .{});
+        pub const maxStorageBuffersPerShaderStage = bridge.accessor(getter("maxStorageBuffersPerShaderStage"), null, .{});
+        pub const maxStorageTexturesPerShaderStage = bridge.accessor(getter("maxStorageTexturesPerShaderStage"), null, .{});
+        pub const maxUniformBuffersPerShaderStage = bridge.accessor(getter("maxUniformBuffersPerShaderStage"), null, .{});
+        pub const maxUniformBufferBindingSize = bridge.accessor(getter("maxUniformBufferBindingSize"), null, .{});
+        pub const maxStorageBufferBindingSize = bridge.accessor(getter("maxStorageBufferBindingSize"), null, .{});
+        pub const minUniformBufferOffsetAlignment = bridge.accessor(getter("minUniformBufferOffsetAlignment"), null, .{});
+        pub const minStorageBufferOffsetAlignment = bridge.accessor(getter("minStorageBufferOffsetAlignment"), null, .{});
+        pub const maxVertexBuffers = bridge.accessor(getter("maxVertexBuffers"), null, .{});
+        pub const maxBufferSize = bridge.accessor(getter("maxBufferSize"), null, .{});
+        pub const maxVertexAttributes = bridge.accessor(getter("maxVertexAttributes"), null, .{});
+        pub const maxVertexBufferArrayStride = bridge.accessor(getter("maxVertexBufferArrayStride"), null, .{});
+        pub const maxInterStageShaderVariables = bridge.accessor(getter("maxInterStageShaderVariables"), null, .{});
+        pub const maxColorAttachments = bridge.accessor(getter("maxColorAttachments"), null, .{});
+        pub const maxColorAttachmentBytesPerSample = bridge.accessor(getter("maxColorAttachmentBytesPerSample"), null, .{});
+        pub const maxComputeWorkgroupStorageSize = bridge.accessor(getter("maxComputeWorkgroupStorageSize"), null, .{});
+        pub const maxComputeInvocationsPerWorkgroup = bridge.accessor(getter("maxComputeInvocationsPerWorkgroup"), null, .{});
+        pub const maxComputeWorkgroupSizeX = bridge.accessor(getter("maxComputeWorkgroupSizeX"), null, .{});
+        pub const maxComputeWorkgroupSizeY = bridge.accessor(getter("maxComputeWorkgroupSizeY"), null, .{});
+        pub const maxComputeWorkgroupSizeZ = bridge.accessor(getter("maxComputeWorkgroupSizeZ"), null, .{});
+        pub const maxComputeWorkgroupsPerDimension = bridge.accessor(getter("maxComputeWorkgroupsPerDimension"), null, .{});
+        pub const maxImmediateSize = bridge.accessor(getter("maxImmediateSize"), null, .{});
+        pub const maxStorageBuffersInFragmentStage = bridge.accessor(getter("maxStorageBuffersInFragmentStage"), null, .{});
+        pub const maxStorageTexturesInFragmentStage = bridge.accessor(getter("maxStorageTexturesInFragmentStage"), null, .{});
+        pub const maxStorageBuffersInVertexStage = bridge.accessor(getter("maxStorageBuffersInVertexStage"), null, .{});
+        pub const maxStorageTexturesInVertexStage = bridge.accessor(getter("maxStorageTexturesInVertexStage"), null, .{});
     };
 };
 
@@ -396,11 +734,23 @@ pub const MediaCapabilities = struct {
 pub const MediaDevices = struct {
     _pad: bool = false,
 
-    /// Empty until a page has camera or microphone permission, which is what
-    /// Chrome returns on a fresh profile. Inventing devices here would be
-    /// caught by the first getUserMedia that followed.
     fn enumerateDevices(_: *const MediaDevices, exec: *const Execution) !js.Promise {
-        return exec.js.local.?.resolvePromise(no_items);
+        const local = exec.js.local.?;
+        const audio_input = try exec._factory.chained(.{
+            MediaDeviceInfo{ ._kind = "audioinput" },
+            InputDeviceInfo{ ._proto = undefined },
+        });
+        const video_input = try exec._factory.chained(.{
+            MediaDeviceInfo{ ._kind = "videoinput" },
+            InputDeviceInfo{ ._proto = undefined },
+        });
+        const audio_output = try exec._factory.create(MediaDeviceInfo{ ._kind = "audiooutput" });
+
+        const devices = local.newArray(3);
+        _ = try devices.set(0, audio_input, .{});
+        _ = try devices.set(1, video_input, .{});
+        _ = try devices.set(2, audio_output, .{});
+        return local.resolvePromise(devices.toValue());
     }
     fn getSupportedConstraints(_: *const MediaDevices) struct {
         width: bool,
@@ -458,6 +808,79 @@ pub const MediaDevices = struct {
         pub const getDisplayMedia = bridge.function(MediaDevices.getDisplayMedia, .{});
         pub const setCaptureHandleConfig = bridge.function(MediaDevices.setCaptureHandleConfig, .{});
         pub const ondevicechange = bridge.accessor(MediaDevices.getOnDeviceChange, null, .{});
+    };
+};
+
+pub const MediaDeviceInfo = struct {
+    pub const _prototype_root = true;
+
+    _kind: []const u8,
+
+    fn getDeviceId(_: *const MediaDeviceInfo) []const u8 {
+        return "";
+    }
+
+    fn getKind(self: *const MediaDeviceInfo) []const u8 {
+        return self._kind;
+    }
+
+    fn getLabel(_: *const MediaDeviceInfo) []const u8 {
+        return "";
+    }
+
+    fn getGroupId(_: *const MediaDeviceInfo) []const u8 {
+        return "";
+    }
+
+    const JSON = struct {
+        deviceId: []const u8,
+        kind: []const u8,
+        label: []const u8,
+        groupId: []const u8,
+    };
+
+    fn toJSON(self: *const MediaDeviceInfo) JSON {
+        return .{
+            .deviceId = "",
+            .kind = self._kind,
+            .label = "",
+            .groupId = "",
+        };
+    }
+
+    pub const JsApi = struct {
+        pub const bridge = js.Bridge(MediaDeviceInfo);
+        pub const Meta = struct {
+            pub const name = "MediaDeviceInfo";
+            pub const prototype_chain = bridge.prototypeChain();
+            pub var class_id: bridge.ClassId = undefined;
+        };
+
+        pub const deviceId = bridge.accessor(MediaDeviceInfo.getDeviceId, null, .{});
+        pub const kind = bridge.accessor(MediaDeviceInfo.getKind, null, .{});
+        pub const label = bridge.accessor(MediaDeviceInfo.getLabel, null, .{});
+        pub const groupId = bridge.accessor(MediaDeviceInfo.getGroupId, null, .{});
+        pub const toJSON = bridge.function(MediaDeviceInfo.toJSON, .{});
+    };
+};
+
+pub const InputDeviceInfo = struct {
+    pub const Proto = MediaDeviceInfo;
+    _proto: *MediaDeviceInfo,
+
+    fn getCapabilities(_: *const InputDeviceInfo) struct {} {
+        return .{};
+    }
+
+    pub const JsApi = struct {
+        pub const bridge = js.Bridge(InputDeviceInfo);
+        pub const Meta = struct {
+            pub const name = "InputDeviceInfo";
+            pub const prototype_chain = bridge.prototypeChain();
+            pub var class_id: bridge.ClassId = undefined;
+        };
+
+        pub const getCapabilities = bridge.function(InputDeviceInfo.getCapabilities, .{});
     };
 };
 
@@ -539,51 +962,274 @@ pub const Scheduling = struct {
 };
 
 pub const ServiceWorkerContainer = struct {
-    _pad: bool = false,
+    pub const Proto = EventTarget;
+
+    _proto: *EventTarget,
+    _frame: *Frame,
+    _ready_resolver: ?js.PromiseResolver.Global = null,
+    _ready_registration: ?*ServiceWorkerRegistration = null,
+    _on_controller_change: ?js.Function.Global = null,
+    _on_message: ?js.Function.Global = null,
+    _on_message_error: ?js.Function.Global = null,
 
     /// No worker controls this page, which is the truth on a first load even
     /// in a browser that supports them.
-    fn getController(_: *const ServiceWorkerContainer) ?js.Function.Global {
-        return null;
-    }
-    fn getReady(_: *const ServiceWorkerContainer, exec: *const Execution) js.Promise {
-        // Chrome's `ready` never settles until a worker is active, and a
-        // pending promise is exactly what a page with no registration sees.
-        return exec.js.local.?.createPromiseResolver().promise();
-    }
-    fn register(_: *const ServiceWorkerContainer, exec: *const Execution) js.Promise {
-        return unsupported(exec);
-    }
-    fn getRegistration(_: *const ServiceWorkerContainer, exec: *const Execution) !js.Promise {
-        return exec.js.local.?.resolvePromise(null);
-    }
-    fn getRegistrations(_: *const ServiceWorkerContainer, exec: *const Execution) !js.Promise {
-        return exec.js.local.?.resolvePromise(no_items);
-    }
-    fn startMessages(_: *const ServiceWorkerContainer) void {}
-    fn getOnControllerChange(_: *const ServiceWorkerContainer) ?js.Function.Global {
-        return null;
-    }
-    fn getOnMessage(_: *const ServiceWorkerContainer) ?js.Function.Global {
-        return null;
-    }
-    fn getOnMessageError(_: *const ServiceWorkerContainer) ?js.Function.Global {
+    fn getController(_: *const ServiceWorkerContainer) ?*ServiceWorker {
         return null;
     }
 
+    fn getReady(self: *ServiceWorkerContainer, exec: *const Execution) !js.Promise {
+        if (self._ready_registration) |registration| {
+            if (registration._scope._state == .activated) {
+                return exec.js.local.?.resolvePromise(registration);
+            }
+        }
+        if (self._ready_resolver) |resolver| {
+            return resolver.local(exec.js.local.?).promise();
+        }
+        const resolver = exec.js.local.?.createPromiseResolver();
+        self._ready_resolver = try resolver.persist();
+        return resolver.promise();
+    }
+
+    fn register(
+        self: *ServiceWorkerContainer,
+        script_url: []const u8,
+        options_: ?ServiceWorkerGlobalScope.RegistrationOptions,
+        exec: *const Execution,
+    ) !js.Promise {
+        const frame = self._frame;
+        const options: ServiceWorkerGlobalScope.RegistrationOptions = options_ orelse .{};
+        const worker_type: @import("Worker.zig").WorkerType = if (options.type) |value|
+            if (std.mem.eql(u8, value, "module")) .module else .classic
+        else
+            .classic;
+        const update_via_cache: ServiceWorkerGlobalScope.UpdateViaCache = if (options.updateViaCache) |value|
+            if (std.mem.eql(u8, value, "all"))
+                .all
+            else if (std.mem.eql(u8, value, "none"))
+                .none
+            else
+                .imports
+        else
+            .imports;
+        const resolved_script = try URL.resolve(frame.call_arena, frame.base(), script_url, .{ .encoding = frame.charset });
+        if (!frame.isSameOrigin(resolved_script)) {
+            return exec.js.local.?.rejectPromise(.{ .dom_exception = .{ .err = error.SecurityError } });
+        }
+
+        const raw_scope = options.scope orelse defaultScope(resolved_script);
+        const resolved_scope = try URL.resolve(frame.call_arena, frame.base(), raw_scope, .{ .encoding = frame.charset });
+        if (!frame.isSameOrigin(resolved_scope)) {
+            return exec.js.local.?.rejectPromise(.{ .dom_exception = .{ .err = error.SecurityError } });
+        }
+
+        const session = frame._session;
+        const scope = session.service_workers.get(resolved_scope) orelse create: {
+            const created = try ServiceWorkerGlobalScope.init(frame, resolved_script, resolved_scope, worker_type, update_via_cache);
+            errdefer created.deinit();
+            try frame.page.service_workers.append(frame.page.frame_arena, created);
+            errdefer _ = frame.page.service_workers.pop();
+            try created.register();
+            break :create created;
+        };
+
+        const registration = try ServiceWorkerRegistration.init(scope, frame.page);
+        registration._worker.setMessageTarget(.{
+            .context = self,
+            .callback = receiveWorkerMessage,
+        });
+        self._ready_registration = registration;
+
+        if (scope._state == .activated) {
+            if (self._ready_resolver) |ready| {
+                ready.local(exec.js.local.?).resolve("ServiceWorkerContainer.ready", registration);
+                ready.deinit();
+                self._ready_resolver = null;
+            }
+            return exec.js.local.?.resolvePromise(registration);
+        }
+
+        const resolver = exec.js.local.?.createPromiseResolver();
+        const persisted = try resolver.persist();
+        const ready = self._ready_resolver;
+        self._ready_resolver = null;
+        try scope.addWaiter(registration, persisted, ready);
+        return resolver.promise();
+    }
+
+    fn getRegistration(self: *ServiceWorkerContainer, document_url_: ?[]const u8, exec: *const Execution) !js.Promise {
+        const frame = self._frame;
+        const document_url = document_url_ orelse "";
+        const resolved = if (document_url.len == 0)
+            frame.url
+        else
+            try URL.resolve(frame.call_arena, frame.base(), document_url, .{ .encoding = frame.charset });
+
+        var best: ?*ServiceWorkerGlobalScope = null;
+        var it = frame._session.service_workers.valueIterator();
+        while (it.next()) |candidate| {
+            if (std.mem.startsWith(u8, resolved, candidate.*._scope) and
+                (best == null or candidate.*._scope.len > best.?._scope.len))
+            {
+                best = candidate.*;
+            }
+        }
+        const scope = best orelse return exec.js.local.?.resolvePromise(js.Undefined{});
+        return exec.js.local.?.resolvePromise(try ServiceWorkerRegistration.init(scope, frame.page));
+    }
+
+    fn getRegistrations(self: *ServiceWorkerContainer, exec: *const Execution) !js.Promise {
+        const frame = self._frame;
+        const registrations = try frame.call_arena.alloc(*ServiceWorkerRegistration, frame._session.service_workers.count());
+        var i: usize = 0;
+        var it = frame._session.service_workers.valueIterator();
+        while (it.next()) |scope| : (i += 1) {
+            registrations[i] = try ServiceWorkerRegistration.init(scope.*, frame.page);
+        }
+        return exec.js.local.?.resolvePromise(registrations);
+    }
+    fn startMessages(_: *const ServiceWorkerContainer) void {}
+
+    fn receiveWorkerMessage(
+        context: *anyopaque,
+        source: *ServiceWorker,
+        data: js.Value,
+    ) !void {
+        const self: *ServiceWorkerContainer = @ptrCast(@alignCast(context));
+        const frame = self._frame;
+        const message_arena = try frame.getArena(.tiny, "ServiceWorkerContainer.receiveMessage");
+        errdefer message_arena.release();
+
+        var ls: js.Local.Scope = undefined;
+        frame.js.localScope(&ls);
+        defer ls.deinit();
+
+        const cloned = data.structuredCloneTo(&ls.local) catch |err| {
+            const callback = try message_arena.create(ContainerMessageCallback);
+            callback.* = .{ .arena = message_arena, .container = self, .source = source, .data = err };
+            try frame.js.scheduler.add(callback, ContainerMessageCallback.run, 0, .{
+                .name = "ServiceWorkerContainer.messageerror",
+                .finalizer = ContainerMessageCallback.cancelled,
+            });
+            return;
+        };
+        const persisted = try cloned.persist();
+        errdefer persisted.release();
+
+        const callback = try message_arena.create(ContainerMessageCallback);
+        callback.* = .{ .arena = message_arena, .container = self, .source = source, .data = persisted };
+        try frame.js.scheduler.add(callback, ContainerMessageCallback.run, 0, .{
+            .name = "ServiceWorkerContainer.message",
+            .finalizer = ContainerMessageCallback.cancelled,
+        });
+    }
+
+    const ContainerMessageCallback = struct {
+        arena: *@import("../../Arena.zig"),
+        container: *ServiceWorkerContainer,
+        source: *ServiceWorker,
+        data: anyerror!js.Value.Global,
+
+        fn cancelled(context: *anyopaque) void {
+            const self: *ContainerMessageCallback = @ptrCast(@alignCast(context));
+            if (self.data) |data| data.release() else |_| {}
+            self.arena.release();
+        }
+
+        fn run(context: *anyopaque) !?u32 {
+            const self: *ContainerMessageCallback = @ptrCast(@alignCast(context));
+            defer self.arena.release();
+
+            const container = self.container;
+            const frame = container._frame;
+            const target = container._proto;
+            const data = self.data catch |err| {
+                if (!frame._event_manager.hasDirectListeners(target, "messageerror", container._on_message_error)) return null;
+                const event = (try MessageEvent.initTrusted(comptime .wrap("messageerror"), .{
+                    .data = .{ .string = @errorName(err) },
+                    .bubbles = false,
+                    .cancelable = false,
+                }, frame.page)).asEvent();
+                try frame._event_manager.dispatchDirect(target, event, container._on_message_error, .{ .context = "ServiceWorkerContainer.messageerror" });
+                return null;
+            };
+
+            if (!frame._event_manager.hasDirectListeners(target, "message", container._on_message)) {
+                data.release();
+                return null;
+            }
+
+            var ls: js.Local.Scope = undefined;
+            frame.js.localScope(&ls);
+            defer ls.deinit();
+            const source = try (try ls.local.zigValueToJs(self.source, .{})).persist();
+            errdefer source.release();
+            const event = (try MessageEvent.initTrusted(comptime .wrap("message"), .{
+                .data = .{ .value = data },
+                .source = .{ .value = source },
+                .bubbles = false,
+                .cancelable = false,
+            }, frame.page)).asEvent();
+            try frame._event_manager.dispatchDirect(target, event, container._on_message, .{ .context = "ServiceWorkerContainer.message" });
+            return null;
+        }
+    };
+
+    fn defaultScope(script_url: []const u8) []const u8 {
+        const end = std.mem.indexOfAny(u8, script_url, "?#") orelse script_url.len;
+        const slash = std.mem.lastIndexOfScalar(u8, script_url[0..end], '/') orelse return script_url[0..end];
+        return script_url[0 .. slash + 1];
+    }
+
+    fn getOnControllerChange(self: *const ServiceWorkerContainer) ?js.Function.Global {
+        return self._on_controller_change;
+    }
+    fn setOnControllerChange(self: *ServiceWorkerContainer, setter: ?FunctionSetter) void {
+        self._on_controller_change = getFunctionFromSetter(setter);
+    }
+    fn getOnMessage(self: *const ServiceWorkerContainer) ?js.Function.Global {
+        return self._on_message;
+    }
+    fn setOnMessage(self: *ServiceWorkerContainer, setter: ?FunctionSetter) void {
+        self._on_message = getFunctionFromSetter(setter);
+    }
+    fn getOnMessageError(self: *const ServiceWorkerContainer) ?js.Function.Global {
+        return self._on_message_error;
+    }
+    fn setOnMessageError(self: *ServiceWorkerContainer, setter: ?FunctionSetter) void {
+        self._on_message_error = getFunctionFromSetter(setter);
+    }
+
+    const FunctionSetter = union(enum) {
+        func: js.Function.Global,
+        anything: js.Value,
+    };
+
+    fn getFunctionFromSetter(setter_: ?FunctionSetter) ?js.Function.Global {
+        const setter = setter_ orelse return null;
+        return switch (setter) {
+            .func => |func| func,
+            .anything => null,
+        };
+    }
+
     pub const JsApi = struct {
-        const M = ApiMeta(ServiceWorkerContainer, "ServiceWorkerContainer");
-        pub const bridge = M.bridge;
-        pub const Meta = M.Meta;
+        pub const bridge = js.Bridge(ServiceWorkerContainer);
+        pub const Meta = struct {
+            pub const name = "ServiceWorkerContainer";
+            pub const prototype_chain = bridge.prototypeChain();
+            pub var class_id: bridge.ClassId = undefined;
+        };
         pub const controller = bridge.accessor(ServiceWorkerContainer.getController, null, .{});
         pub const ready = bridge.accessor(ServiceWorkerContainer.getReady, null, .{});
         pub const register = bridge.function(ServiceWorkerContainer.register, .{});
         pub const getRegistration = bridge.function(ServiceWorkerContainer.getRegistration, .{});
         pub const getRegistrations = bridge.function(ServiceWorkerContainer.getRegistrations, .{});
         pub const startMessages = bridge.function(ServiceWorkerContainer.startMessages, .{});
-        pub const oncontrollerchange = bridge.accessor(ServiceWorkerContainer.getOnControllerChange, null, .{});
-        pub const onmessage = bridge.accessor(ServiceWorkerContainer.getOnMessage, null, .{});
-        pub const onmessageerror = bridge.accessor(ServiceWorkerContainer.getOnMessageError, null, .{});
+        pub const oncontrollerchange = bridge.accessor(ServiceWorkerContainer.getOnControllerChange, ServiceWorkerContainer.setOnControllerChange, .{});
+        pub const onmessage = bridge.accessor(ServiceWorkerContainer.getOnMessage, ServiceWorkerContainer.setOnMessage, .{});
+        pub const onmessageerror = bridge.accessor(ServiceWorkerContainer.getOnMessageError, ServiceWorkerContainer.setOnMessageError, .{});
     };
 };
 
@@ -679,6 +1325,7 @@ pub const DeprecatedStorageQuota = struct {
         pub const bridge = js.Bridge(DeprecatedStorageQuota);
         pub const Meta = struct {
             pub const name = "DeprecatedStorageQuota";
+            pub const expose_global = false;
             pub const prototype_chain = bridge.prototypeChain();
             pub var class_id: bridge.ClassId = undefined;
             pub const empty_with_no_proto = true;
@@ -734,3 +1381,8 @@ pub const XRSystem = struct {
         pub const ondevicechange = bridge.accessor(XRSystem.getOnDeviceChange, null, .{});
     };
 };
+
+test "WebApi: WebGPU" {
+    const testing = @import("../../testing.zig");
+    try testing.htmlRunner("webgpu.html", .{});
+}

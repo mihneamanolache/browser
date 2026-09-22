@@ -16,11 +16,12 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Sub-resources fetched only for their outcome, gated on `--load-resources`:
-// nothing in the document consumes the body, we fetch so that the element's
-// load/error event reflects the real HTTP status.
+// Optional sub-resource loads, gated on `--load-resources`. Images need their
+// body: HTTP success does not imply a decodable image, and decoded dimensions
+// are observable from HTMLImageElement.
 
 const lp = @import("lightpanda");
+const std = @import("std");
 
 const URL = @import("../URL.zig");
 const Frame = @import("../Frame.zig");
@@ -29,6 +30,10 @@ const Element = @import("../webapi/Element.zig");
 const HttpClient = @import("../../network/HttpClient.zig");
 
 const log = lp.log;
+const max_image_body = 64 * 1024 * 1024;
+
+extern "c" fn lp_image_decode_info([*]const u8, usize, *u32, *u32) c_int;
+extern "c" fn lp_png_decode_info([*]const u8, usize, *u32, *u32) bool;
 
 // Asynchronous, unlike `Frame.loadExternalStylesheet`: nothing in the document
 // depends on the result, so there's no reason to block the parser on it. The
@@ -52,10 +57,12 @@ pub fn image(frame: *Frame, img: *Element.Html.Image, src: []const u8) !void {
         .frame = frame,
         .image = img,
         .generation = img._generation,
+        .allocator = frame._factory.storageAllocator(),
     });
     errdefer frame._factory.destroy(load);
 
     img._complete = false;
+    img._broken = false;
     frame._pending_loads += 1;
     errdefer {
         frame._pending_loads -= 1;
@@ -83,7 +90,7 @@ pub fn image(frame: *Frame, img: *Element.Html.Image, src: []const u8) !void {
         .request_mode = .no_cors,
         .credentials_mode = .include,
         .resource_type = .image,
-        .headers_only = true,
+        .streaming = true,
         .header_callback = ImageLoad.headerCallback,
         .data_callback = ImageLoad.dataCallback,
         .done_callback = ImageLoad.doneCallback,
@@ -115,21 +122,43 @@ const ImageLoad = struct {
     frame: *Frame,
     image: *Element.Html.Image,
     generation: u32,
+    allocator: std.mem.Allocator,
     status: u16 = 0,
+    svg: bool = false,
+    body: std.ArrayList(u8) = .empty,
 
     fn headerCallback(transfer: *HttpClient.Transfer) !HttpClient.Transfer.HeaderResult {
         const self: *ImageLoad = @ptrCast(@alignCast(transfer.req.ctx));
         self.status = transfer.responseStatus() orelse 0;
+        if (transfer.contentType()) |content_type| {
+            self.svg = std.mem.startsWith(u8, content_type, "image/svg+xml");
+        }
         return .proceed;
     }
 
-    fn dataCallback(_: *HttpClient.Transfer, _: []const u8) !void {
-        // headers_only tears the transfer down at the first body byte.
+    fn dataCallback(transfer: *HttpClient.Transfer, bytes: []const u8) !void {
+        const self: *ImageLoad = @ptrCast(@alignCast(transfer.req.ctx));
+        if (self.status < 200 or self.status >= 300) return;
+        if (bytes.len > max_image_body -| self.body.items.len) return error.ResponseTooLarge;
+        try self.body.appendSlice(self.allocator, bytes);
     }
 
     fn doneCallback(ctx: *anyopaque) !void {
         const self: *ImageLoad = @ptrCast(@alignCast(ctx));
-        const ok = self.status >= 200 and self.status < 300;
+        var ok = self.status >= 200 and self.status < 300;
+        if (ok) {
+            var width: u32 = 0;
+            var height: u32 = 0;
+            // ImageIO handles formats supported by the macOS host; the
+            // already-linked PNG decoder covers builds on other platforms.
+            // SVG still needs its own image pipeline.
+            ok = lp_png_decode_info(self.body.items.ptr, self.body.items.len, &width, &height) or
+                lp_image_decode_info(self.body.items.ptr, self.body.items.len, &width, &height) != 0 or self.svg;
+            if (ok and self.generation == self.image._generation) {
+                self.image._natural_width = width;
+                self.image._natural_height = height;
+            }
+        }
         self.settle(if (ok) .load else .@"error");
     }
 
@@ -142,7 +171,11 @@ const ImageLoad = struct {
     fn shutdownCallback(ctx: *anyopaque) void {
         const self: *ImageLoad = @ptrCast(@alignCast(ctx));
         const frame = self.frame;
-        self.image._complete = true;
+        if (self.generation == self.image._generation) {
+            self.image._complete = true;
+            self.image.releaseDecodes(frame);
+        }
+        self.body.deinit(self.allocator);
         frame._factory.destroy(self);
 
         // Teardown or a superseding navigation. Release the slot directly:
@@ -170,28 +203,36 @@ const ImageLoad = struct {
 
         // A later src assignment owns the element's events now; this response
         // is only still here to give its pending-load slot back.
-        const current = self.generation == img._generation;
+        const generation = self.generation;
+        const current = generation == img._generation;
         if (current) {
             img._complete = true;
+            img._broken = kind == .@"error";
+            img._loaded = kind == .load;
         }
 
         // Released before anything below, because everything below can run JS
         // and none of it reads `self` again.
+        self.body.deinit(self.allocator);
         frame._factory.destroy(self);
 
         if (frame.isGoingAway()) {
+            if (current) img.releaseDecodes(frame);
             frame._pending_loads -|= 1;
             return;
         }
 
         if (current) {
+            img.finishDecodes(frame, kind == .load);
             // Queued, not dispatched: `submit` can fail synchronously, which
             // puts us inside html5ever parsing, and an event handler is free
             // to navigate. Queueing also puts these events ahead of window
             // load, which is where the spec wants them.
-            frame.queueElementEvent(Factory.protoOf(img), kind) catch |err| {
-                log.warn(.frame, "image queue event", .{ .err = err, .kind = kind });
-            };
+            if (generation == img._generation and !frame.isGoingAway()) {
+                frame.queueElementEvent(Factory.protoOf(img), kind) catch |err| {
+                    log.warn(.frame, "image queue event", .{ .err = err, .kind = kind });
+                };
+            }
         }
 
         frame.pendingLoadCompleted();

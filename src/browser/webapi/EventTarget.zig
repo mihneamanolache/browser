@@ -35,6 +35,8 @@ const MessagePort = @import("MessagePort.zig");
 const Performance = @import("Performance.zig");
 const Notification = @import("Notification.zig");
 const SharedWorker = @import("SharedWorker.zig");
+const ServiceWorker = @import("ServiceWorker.zig");
+const ServiceWorkerRegistration = @import("ServiceWorkerRegistration.zig");
 const VisualViewport = @import("VisualViewport.zig");
 const BroadcastChannel = @import("BroadcastChannel.zig");
 const WorkerGlobalScope = @import("WorkerGlobalScope.zig");
@@ -92,6 +94,9 @@ pub const Type = enum(u8) {
     screen,
     screen_orientation,
     shared_worker,
+    service_worker,
+    service_worker_container,
+    service_worker_registration,
     text_track_cue,
     visual_viewport,
     websocket,
@@ -127,6 +132,9 @@ pub fn Subtype(comptime tag: Type) type {
         .screen => Screen,
         .screen_orientation => Screen.Orientation,
         .shared_worker => SharedWorker,
+        .service_worker => ServiceWorker,
+        .service_worker_container => @import("navigator_apis.zig").ServiceWorkerContainer,
+        .service_worker_registration => ServiceWorkerRegistration,
         .text_track_cue => TextTrackCue,
         .visual_viewport => VisualViewport,
         .websocket => WebSocket,
@@ -319,6 +327,9 @@ pub fn format(self: *EventTarget, writer: *std.Io.Writer) !void {
         .window => writer.writeAll("<Window>"),
         .worker => writer.writeAll("<Worker>"),
         .shared_worker => writer.writeAll("<SharedWorker>"),
+        .service_worker => writer.writeAll("<ServiceWorker>"),
+        .service_worker_container => writer.writeAll("<ServiceWorkerContainer>"),
+        .service_worker_registration => writer.writeAll("<ServiceWorkerRegistration>"),
         .worker_global_scope => writer.writeAll("<WorkerGlobalScope>"),
         .xhr => writer.writeAll("<XMLHttpRequestEventTarget>"),
         .abort_signal => writer.writeAll("<AbortSignal>"),
@@ -369,6 +380,9 @@ pub fn toString(self: *EventTarget) []const u8 {
         .screen => return "[object Screen]",
         .screen_orientation => return "[object ScreenOrientation]",
         .shared_worker => return "[object SharedWorker]",
+        .service_worker => return "[object ServiceWorker]",
+        .service_worker_container => return "[object ServiceWorkerContainer]",
+        .service_worker_registration => return "[object ServiceWorkerRegistration]",
         .text_track_cue => return "[object TextTrackCue]",
         .visual_viewport => return "[object VisualViewport]",
         .websocket => return "[object WebSocket]",

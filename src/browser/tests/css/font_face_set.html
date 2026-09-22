@@ -33,6 +33,7 @@
 {
     const ready = document.fonts.ready;
     testing.expectTrue(ready instanceof Promise);
+    testing.expectTrue(ready === document.fonts.ready);
 }
 </script>
 
@@ -70,11 +71,79 @@
     });
 
     document.fonts.load("italic bold 16px Roboto");
-
-    testing.onload(() => {
-      testing.expectEqual(true, loading);
-      testing.expectEqual(true, loadingdone);
-    });
-    testing.expectEqual(true, true);
+    testing.expectEqual(false, loading);
+    testing.expectEqual(false, loadingdone);
 }
+</script>
+
+<script id="document_fonts_manual_faces">
+{
+    const face = new FontFace('AuditLocal', 'local(Arial)');
+    testing.expectEqual('unloaded', face.status);
+    testing.expectTrue(document.fonts.add(face) === document.fonts);
+    testing.expectEqual(1, document.fonts.size);
+    testing.expectTrue(document.fonts.has(face));
+    testing.expectEqual(false, document.fonts.check('12px AuditLocal'));
+    document.fonts.load('12px AuditLocal').then(faces => {
+        testing.expectEqual(1, faces.length);
+        testing.expectTrue(faces[0] === face);
+        testing.expectEqual('loaded', face.status);
+    });
+    testing.expectTrue(document.fonts.delete(face));
+    testing.expectEqual(0, document.fonts.size);
+    testing.expectEqual(false, document.fonts.has(face));
+}
+</script>
+
+<script id="document_fonts_css_face">
+{
+    const style = document.createElement('style');
+    style.textContent = '@font-face { font-family: "Audit CSS"; src: local("Arial"); }';
+    document.head.appendChild(style);
+    testing.expectEqual(1, document.fonts.size);
+    testing.expectEqual('Audit CSS', [...document.fonts][0].family);
+    testing.expectEqual(false, document.fonts.check('12px Audit CSS'));
+    document.fonts.load('12px Audit CSS').then(faces => {
+        testing.expectEqual(1, faces.length);
+        testing.expectEqual('Audit CSS', faces[0].family);
+    });
+    style.remove();
+    testing.expectEqual(0, document.fonts.size);
+}
+</script>
+
+<script id="document_fonts_css_descriptors">
+{
+    const style = document.createElement('style');
+    style.textContent = '@font-face { font-family: "Descriptor Probe"; src: local(Arial); font-style: italic; font-weight: 400 700; font-stretch: condensed; unicode-range: U+0000-00FF,U+0131; font-feature-settings: "liga" 0; font-display: optional; }';
+    document.head.appendChild(style);
+    const face = [...document.fonts].find(f => f.family === 'Descriptor Probe');
+    testing.expectTrue(!!face);
+    testing.expectEqual('italic', face.style);
+    testing.expectEqual('400 700', face.weight);
+    testing.expectEqual('condensed', face.stretch);
+    testing.expectEqual('U+0-FF, U+131', face.unicodeRange);
+    testing.expectEqual('"liga" 0', face.featureSettings);
+    testing.expectEqual('optional', face.display);
+    style.remove();
+}
+</script>
+
+<script id="document_fonts_url_face" type="module">
+  const state = await testing.async();
+  const style = document.createElement('style');
+  style.textContent = '@font-face { font-family: "Bundled Test"; src: url(/font_valid.ttf); }';
+  document.head.appendChild(style);
+  const face = [...document.fonts].find(f => f.family === 'Bundled Test');
+  testing.expectTrue(!!face);
+  testing.expectEqual('unloaded', face.status);
+  const loaded = await document.fonts.load('12px Bundled Test');
+  state.resolve();
+  await state.done(() => {
+    testing.expectEqual(1, loaded.length);
+    testing.expectTrue(loaded[0] === face);
+    testing.expectEqual('loaded', face.status);
+    testing.expectTrue(document.fonts.check('12px Bundled Test'));
+    style.remove();
+  });
 </script>

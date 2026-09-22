@@ -58,7 +58,7 @@ fn setDisabled(self: *CSSStyleSheet, disabled: bool) void {
     self._disabled = disabled;
 }
 
-fn getCssRules(self: *CSSStyleSheet, frame: *Frame) !*CSSRuleList {
+pub fn getCssRules(self: *CSSStyleSheet, frame: *Frame) !*CSSRuleList {
     if (self._css_rules) |rules| return rules;
 
     const rules = try CSSRuleList.init(frame);

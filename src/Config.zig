@@ -238,6 +238,8 @@ fn caPathValidator(
 pub const HttpVersion = enum {
     auto,
     @"1.1",
+    @"3",
+    @"3-only",
 };
 
 pub const LoadResources = packed struct(u4) {
@@ -279,12 +281,16 @@ const CommonOptions = .{
     .{ .name = "web_bot_auth_domain", .type = ?[]const u8 },
     .{ .name = "user_agent", .type = ?[]const u8, .validator = userAgentValidator },
     // Which machine and which region this process claims to be. Left unset,
-    // both are drawn from --fingerprint-seed (a fresh random one per run), and
-    // the region follows the proxy's exit IP when there is a proxy.
+    // a narrowly recognized local Chrome host uses its measured profile;
+    // other hosts draw from --fingerprint-seed (fresh random one per run).
+    // The region follows the proxy's exit IP when there is a proxy.
     .{ .name = "fingerprint", .type = ?[]const u8 },
     .{ .name = "fingerprint_region", .type = ?[]const u8 },
     .{ .name = "fingerprint_seed", .type = ?u64 },
     .{ .name = "fingerprint_list", .type = bool },
+    // Emit first access and per-context totals for implemented Web API
+    // members. This is intentionally opt-in compatibility instrumentation.
+    .{ .name = "trace_webapi", .type = bool },
     // No compile-time default: with no --locale the profile's region supplies
     // one, and the region can be chosen at startup (by seed, by name, or from
     // the proxy's exit country). Resolved in `Config.locale()`.
@@ -653,6 +659,13 @@ pub fn fingerprintSeed(self: *const Config) ?u64 {
 pub fn fingerprintList(self: *const Config) bool {
     return switch (self.mode) {
         inline .serve, .fetch, .mcp, .agent => |opts| opts.fingerprint_list,
+        else => false,
+    };
+}
+
+pub fn traceWebApi(self: *const Config) bool {
+    return switch (self.mode) {
+        inline .serve, .fetch, .mcp, .agent => |opts| opts.trace_webapi,
         else => false,
     };
 }
@@ -1032,7 +1045,7 @@ pub const HttpHeaders = struct {
     pub const userAgentBase = fingerprint.userAgent;
 
     // Document-navigation Accept value Chrome sends.
-    pub const navigation_accept: [:0]const u8 = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+    pub const navigation_accept: [:0]const u8 = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
 
     user_agent: [:0]const u8, // User agent value (e.g. "Lightpanda/1.0")
     /// Whether `user_agent` was allocated here. A pointer comparison against
@@ -1363,10 +1376,16 @@ test "Config: parseArgs --http-version" {
         try std.testing.expectEqual(.@"1.1", config.httpVersion());
     }
     {
-        log.expectLog(&.{.app});
         const argv = [_][*:0]const u8{ "lightpanda", "fetch", "--http-version", "3" };
         const proc_args: std.process.Args = .{ .vector = &argv };
-        try std.testing.expectError(error.InvalidArgument, parseArgs(std.testing.allocator, proc_args));
+        const config = try parseArgs(arena.allocator(), proc_args);
+        try std.testing.expectEqual(.@"3", config.httpVersion());
+    }
+    {
+        const argv = [_][*:0]const u8{ "lightpanda", "fetch", "--http-version", "3-only" };
+        const proc_args: std.process.Args = .{ .vector = &argv };
+        const config = try parseArgs(arena.allocator(), proc_args);
+        try std.testing.expectEqual(.@"3-only", config.httpVersion());
     }
 }
 

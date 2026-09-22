@@ -535,14 +535,13 @@ test "cdp.lp: configureCDP sets the HTTP version on this connection's client" {
     try ctx.expectSentResult(null, .{ .id = 1 });
     try testing.expectEqual(.@"1.1", client.http_version);
 
-    // Unsupported versions are rejected, not silently ignored.
     try ctx.processMessage(.{
         .id = 2,
         .method = "LP.configureCDP",
         .params = .{ .httpVersion = "3" },
     });
-    try testing.expect((try ctx.getSentMessage(1)).?.object.get("error") != null);
-    try testing.expectEqual(.@"1.1", client.http_version);
+    try ctx.expectSentResult(null, .{ .id = 2 });
+    try testing.expectEqual(.@"3", client.http_version);
 
     try ctx.processMessage(.{
         .id = 3,

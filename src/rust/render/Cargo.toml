@@ -9,10 +9,14 @@ path = "lib.rs"
 
 [dependencies]
 parley = { version = "0.11.1", default-features = false, features = ["std"] }
-fontique = { version = "0.11.1", default-features = false, features = ["std"] }
+fontique = { version = "0.11.1", default-features = false, features = ["std", "system"] }
 skrifa = "0.44"
 tiny-skia = "0.12"
 png = "0.18"
 # Only to select `logging`: without it icu_provider prints missing-data notes
 # (e.g. no CJK line-break model) to stderr in debug builds.
 icu_provider = { version = "2", default-features = false, features = ["logging"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = "0.3.2"
+objc2-core-text = "0.3.2"

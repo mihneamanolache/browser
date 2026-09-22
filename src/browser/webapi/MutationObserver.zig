@@ -474,7 +474,7 @@ pub const JsApi = struct {
 
     pub const constructor = bridge.constructor(MutationObserver.init, .{});
 
-    pub const observe = bridge.function(MutationObserver.observe, .{});
+    pub const observe = bridge.function(MutationObserver.observe, .{ .arity = 1 });
     pub const disconnect = bridge.function(MutationObserver.disconnect, .{});
     pub const takeRecords = bridge.function(MutationObserver.takeRecords, .{});
 };

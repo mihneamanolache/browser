@@ -25,6 +25,8 @@ const text_measure = @import("../../../text_measure.zig");
 const Node = @import("../../Node.zig");
 const Element = @import("../../Element.zig");
 const Factory = @import("../../../Factory.zig");
+const DOMRect = @import("../../DOMRect.zig");
+const DOMPoint = @import("../../DOMPoint.zig");
 
 const AnimatedEnumeration = @import("../../svg/AnimatedEnumeration.zig");
 const AnimatedLength = @import("../../svg/AnimatedLength.zig");
@@ -113,6 +115,42 @@ fn getSubStringLength(self: *TextContent, charnum: u32, nchars: u32, frame: *Fra
     return text_measure.substringWidth(self.text(frame), charnum, nchars, self.fontSize(frame));
 }
 
+// Per-character geometry. Real Chrome computes these from its text layout; we
+// approximate from text_measure advances. Exact values are not
+// pixel-identical to Chrome, but implementing the methods stops fingerprinting
+// code (CreepJS, Google botguard) from throwing "getExtentOfChar is not a
+// function" — a hard bot signal — and lets it read plausible geometry instead.
+fn getExtentOfChar(self: *TextContent, charnum: u32, frame: *Frame) !*DOMRect {
+    const t = self.text(frame);
+    if (charnum >= text_measure.utf16Length(t)) return error.IndexSizeError;
+    const fs = self.fontSize(frame);
+    const w = text_measure.substringWidth(t, charnum, 1, fs) catch 0;
+    const x: f64 = if (charnum == 0) 0 else (text_measure.substringWidth(t, 0, charnum, fs) catch 0);
+    return DOMRect.create(.{ .x = x, .y = 0, .width = w, .height = fs }, frame._factory);
+}
+
+fn getStartPositionOfChar(self: *TextContent, charnum: u32, frame: *Frame) !*DOMPoint {
+    const t = self.text(frame);
+    if (charnum >= text_measure.utf16Length(t)) return error.IndexSizeError;
+    const fs = self.fontSize(frame);
+    const x: f64 = if (charnum == 0) 0 else (text_measure.substringWidth(t, 0, charnum, fs) catch 0);
+    return DOMPoint.create(x, 0, 0, 1, frame.page);
+}
+
+fn getEndPositionOfChar(self: *TextContent, charnum: u32, frame: *Frame) !*DOMPoint {
+    const t = self.text(frame);
+    if (charnum >= text_measure.utf16Length(t)) return error.IndexSizeError;
+    const fs = self.fontSize(frame);
+    const x = text_measure.substringWidth(t, 0, charnum + 1, fs) catch 0;
+    return DOMPoint.create(x, 0, 0, 1, frame.page);
+}
+
+fn getRotationOfChar(self: *TextContent, charnum: u32, frame: *Frame) !f64 {
+    const t = self.text(frame);
+    if (charnum >= text_measure.utf16Length(t)) return error.IndexSizeError;
+    return 0;
+}
+
 pub const JsApi = struct {
     pub const bridge = js.Bridge(TextContent);
     pub const Meta = struct {
@@ -130,4 +168,8 @@ pub const JsApi = struct {
     pub const getNumberOfChars = bridge.function(TextContent.getNumberOfChars, .{});
     pub const getComputedTextLength = bridge.function(TextContent.getComputedTextLength, .{});
     pub const getSubStringLength = bridge.function(TextContent.getSubStringLength, .{});
+    pub const getExtentOfChar = bridge.function(TextContent.getExtentOfChar, .{});
+    pub const getStartPositionOfChar = bridge.function(TextContent.getStartPositionOfChar, .{});
+    pub const getEndPositionOfChar = bridge.function(TextContent.getEndPositionOfChar, .{});
+    pub const getRotationOfChar = bridge.function(TextContent.getRotationOfChar, .{});
 };

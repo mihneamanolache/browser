@@ -29,6 +29,9 @@ const CanvasPattern = @import("CanvasPattern.zig");
 
 const Execution = js.Execution;
 
+extern "c" fn lp_font_measure_utf8([*]const u8, usize, [*]const u8, usize, f64, c_int, c_int) f64;
+extern "c" fn lp_system_font_available([*]const u8, usize) bool;
+
 const default_font = "10px sans-serif";
 
 // Chart libraries flip font and dash per label per animation frame, so these
@@ -61,9 +64,38 @@ pub const StyleOutput = union(enum) {
     pattern: *CanvasPattern,
 };
 
+pub const ContextOptions = struct {
+    alpha: bool = true,
+    colorSpace: []const u8 = "srgb",
+    desynchronized: bool = false,
+    // getContext's options object is shared by 2D and WebGL entry points.
+    // 2D ignores this member; WebGL uses it for compositing/serialization.
+    premultipliedAlpha: bool = true,
+    willReadFrequently: bool = false,
+};
+
+pub const ContextAttributes = struct {
+    alpha: bool,
+    colorSpace: []const u8,
+    colorType: []const u8 = "unorm8",
+    desynchronized: bool,
+    toneMapping: struct { mode: []const u8 = "standard" } = .{},
+    willReadFrequently: bool,
+
+    pub fn fromOptions(options: ContextOptions) ContextAttributes {
+        return .{
+            .alpha = options.alpha,
+            .colorSpace = if (std.mem.eql(u8, options.colorSpace, "display-p3")) "display-p3" else "srgb",
+            .desynchronized = options.desynchronized,
+            .willReadFrequently = options.willReadFrequently,
+        };
+    }
+};
+
 pub const State = struct {
     fill_style: Style = .{ .color = color.RGBA.Named.black },
     stroke_style: Style = .{ .color = color.RGBA.Named.black },
+    global_alpha: f64 = 1,
 
     font_size: f64 = 10,
     font_buf: [font_capacity]u8 = default_font.* ++ [_]u8{0} ** (font_capacity - default_font.len),
@@ -93,7 +125,8 @@ pub const State = struct {
     }
 
     pub fn measureText(self: *const State, text: []const u8, exec: *const Execution) !*TextMetrics {
-        return TextMetrics.init(text_measure.width(text, self.font_size), self.font_size, exec);
+        const width = nativeTextWidth(text, self.font(), self.font_size) orelse text_measure.width(text, self.font_size);
+        return TextMetrics.init(width, self.font_size, exec);
     }
 
     pub fn lineDash(self: *const State) []const f64 {
@@ -172,6 +205,63 @@ fn parseFontSize(font: []const u8) ?f64 {
         }
     }
     return null;
+}
+
+fn nativeTextWidth(text: []const u8, font: []const u8, size: f64) ?f64 {
+    const selected = nativeFont(font);
+    const result = lp_font_measure_utf8(text.ptr, text.len, selected.family.ptr, selected.family.len, size, selected.bold, selected.italic);
+    return if (result >= 0 and std.math.isFinite(result)) result else null;
+}
+
+pub const NativeFont = struct { family: []const u8, bold: c_int, italic: c_int };
+
+pub fn nativeFont(font: []const u8) NativeFont {
+    const parsed = canvasFontFamily(font);
+    const prefix = font[0..parsed.style_end];
+    return .{
+        .family = parsed.family,
+        .bold = if (std.mem.indexOf(u8, prefix, "bold") != null or std.mem.indexOf(u8, prefix, "700") != null) 1 else 0,
+        .italic = if (std.mem.indexOf(u8, prefix, "italic") != null or std.mem.indexOf(u8, prefix, "oblique") != null) 1 else 0,
+    };
+}
+
+const CanvasFontFamily = struct { family: []const u8, style_end: usize };
+
+fn canvasFontFamily(font: []const u8) CanvasFontFamily {
+    var cursor: usize = 0;
+    while (cursor < font.len) {
+        while (cursor < font.len and std.ascii.isWhitespace(font[cursor])) : (cursor += 1) {}
+        const start = cursor;
+        while (cursor < font.len and !std.ascii.isWhitespace(font[cursor])) : (cursor += 1) {}
+        if (start == cursor) break;
+        if (parseFontSize(font[start..cursor]) == null) continue;
+        const style_end = start;
+        while (cursor < font.len and std.ascii.isWhitespace(font[cursor])) : (cursor += 1) {}
+        if (cursor < font.len and font[cursor] == '/') {
+            while (cursor < font.len and !std.ascii.isWhitespace(font[cursor])) : (cursor += 1) {}
+        }
+        const families = std.mem.trim(u8, font[cursor..], " \t\r\n");
+        var family_start: usize = 0;
+        while (family_start < families.len) {
+            var end = family_start;
+            var quote: u8 = 0;
+            while (end < families.len) : (end += 1) {
+                const ch = families[end];
+                if (quote != 0) {
+                    if (ch == quote) quote = 0;
+                } else if (ch == '\'' or ch == '"') {
+                    quote = ch;
+                } else if (ch == ',') break;
+            }
+            var family = std.mem.trim(u8, families[family_start..end], " \t\r\n");
+            if (family.len >= 2 and (family[0] == '\'' or family[0] == '"') and family[family.len - 1] == family[0]) family = family[1 .. family.len - 1];
+            const mapped = if (std.ascii.eqlIgnoreCase(family, "sans-serif")) "Arial" else if (std.ascii.eqlIgnoreCase(family, "serif")) "Times New Roman" else if (std.ascii.eqlIgnoreCase(family, "monospace")) "Menlo" else family;
+            if (lp_system_font_available(mapped.ptr, mapped.len)) return .{ .family = mapped, .style_end = style_end };
+            family_start = end + 1;
+        }
+        return .{ .family = "Arial", .style_end = style_end };
+    }
+    return .{ .family = "Arial", .style_end = 0 };
 }
 
 const testing = std.testing;

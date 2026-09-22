@@ -58,6 +58,15 @@
   }
 </script>
 
+<script id=performance_mark_constructor>
+  testing.expectEqual(1, PerformanceMark.length);
+  const constructed = new PerformanceMark('constructed', {startTime: 12.5, detail: 'detail'});
+  testing.expectEqual(true, constructed instanceof PerformanceMark);
+  testing.expectEqual('constructed', constructed.name);
+  testing.expectEqual(12.5, constructed.startTime);
+  testing.expectEqual('detail', constructed.detail);
+</script>
+
 <script id=getEntries>
   {
     // Clear any existing marks first
@@ -287,7 +296,10 @@
     // navigationStart must be a number (sites access performance.timing.navigationStart)
     const timing = performance.timing;
     testing.expectEqual('number', typeof timing.navigationStart);
-    testing.expectEqual(0, timing.navigationStart);
+    testing.expectEqual(true, timing.navigationStart > 0);
+    testing.expectEqual(true, Math.abs(Date.now() - timing.navigationStart) < 60_000);
+    testing.expectEqual(true, timing.fetchStart >= timing.navigationStart);
+    testing.expectEqual(true, timing.responseEnd >= timing.requestStart);
   }
 </script>
 
@@ -359,7 +371,7 @@
   {
     // The most commonly used property — must be a number (not undefined)
     testing.expectEqual('number', typeof performance.timing.navigationStart);
-    testing.expectEqual(0, performance.timing.navigationStart);
+    testing.expectEqual(true, performance.timing.navigationStart > 0);
   }
 </script>
 

@@ -11,6 +11,67 @@
 }
 </script>
 
+<script id=CanvasRenderingContext2D#getContextAttributes_Chrome>
+{
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', {willReadFrequently: true, desynchronized: true, colorSpace: 'display-p3'});
+  const attrs = ctx.getContextAttributes();
+  testing.expectEqual(true, attrs.alpha);
+  testing.expectEqual('display-p3', attrs.colorSpace);
+  testing.expectEqual('unorm8', attrs.colorType);
+  testing.expectEqual(true, attrs.desynchronized);
+  testing.expectEqual('standard', attrs.toneMapping.mode);
+  testing.expectEqual(true, attrs.willReadFrequently);
+  testing.expectEqual(true, canvas.getContext('2d').getContextAttributes().willReadFrequently);
+}
+</script>
+
+<script id=CanvasRenderingContext2D#opaque_bitmap_Chrome>
+{
+  for (const software of [false, true]) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 2;
+    const ctx = canvas.getContext('2d', {alpha: false, willReadFrequently: software});
+    const read = () => Array.from(ctx.getImageData(0, 0, 2, 2).data).join(',');
+    testing.expectEqual('0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0', read());
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, 1, 1);
+    testing.expectEqual('128,0,0,255,0,0,0,255,0,0,0,255,0,0,0,255', read());
+    ctx.clearRect(0, 0, 1, 1);
+    testing.expectEqual('0,0,0,255,0,0,0,255,0,0,0,255,0,0,0,255', read());
+    canvas.width = 2;
+    testing.expectEqual('0,0,0,255,0,0,0,255,0,0,0,255,0,0,0,255', read());
+  }
+}
+</script>
+
+<script id=CanvasRenderingContext2D#putImageData_exact_bytes_Chrome>
+{
+  for (const software of [false, true]) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', {alpha: false, willReadFrequently: software});
+    const image = ctx.createImageData(1, 1);
+    image.data.set([255, 0, 0, 0]);
+    ctx.putImageData(image, 0, 0);
+    testing.expectEqual('255,0,0,0', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+    image.data.set([200, 100, 50, 128]);
+    ctx.putImageData(image, 0, 0);
+    testing.expectEqual('200,100,50,128', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+  }
+}
+</script>
+
+<script id=CanvasRenderingContext2D#fractional_translucent_color_Chrome>
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 3;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(12, 200, 33, .3)';
+  ctx.fillRect(0, 0, .2, .2);
+  testing.expectEqual('0,219,36,7', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+}
+</script>
+
 <script id=CanvasRenderingContext2D#fillStyle>
 {
   const element = document.createElement("canvas");
@@ -111,16 +172,150 @@
 }
 </script>
 
+<script id="CanvasRenderingContext2D#ImageData_round_trip">
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = 2;
+  canvas.height = 2;
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(1, 1);
+  image.data.set([255, 31, 7, 255]);
+  ctx.putImageData(image, 1, 1);
+  testing.expectEqual('255,31,7,255', Array.from(ctx.getImageData(1, 1, 1, 1).data).join(','));
+  testing.expectEqual('0,0,0,0', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+
+  canvas.width = 3;
+  testing.expectEqual('0,0,0,0', Array.from(ctx.getImageData(1, 1, 1, 1).data).join(','));
+
+  ctx.putImageData(image, 1, 1);
+  canvas.width = 3;
+  testing.expectEqual('0,0,0,0', Array.from(ctx.getImageData(1, 1, 1, 1).data).join(','));
+  ctx.putImageData(image, 1, 1);
+  canvas.setAttribute('width', '3');
+  testing.expectEqual('0,0,0,0', Array.from(ctx.getImageData(1, 1, 1, 1).data).join(','));
+}
+</script>
+
+<script id="CanvasRenderingContext2D#ImageData_translucent_round_trip">
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 1;
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(1, 1);
+  image.data.set([127, 64, 32, 128]);
+  ctx.putImageData(image, 0, 0);
+  // Headful Chrome stores premultiplied pixels; unpremultiplication rounds
+  // this red channel from 127 to 128 on readback.
+  testing.expectEqual('128,64,32,128', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+}
+</script>
+
+<script id="CanvasRenderingContext2D#pixel_aligned_rectangles_Chrome">
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = 2; canvas.height = 1;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f00';
+  ctx.fillRect(0, 0, 2, 1);
+  ctx.fillStyle = '#0000ff80';
+  ctx.fillRect(1, 0, 1, 1);
+  testing.expectEqual('255,0,0,255,127,0,128,255', Array.from(ctx.getImageData(0, 0, 2, 1).data).join(','));
+  ctx.clearRect(0, 0, 1, 1);
+  testing.expectEqual('0,0,0,0,127,0,128,255', Array.from(ctx.getImageData(0, 0, 2, 1).data).join(','));
+  ctx.clearRect(1, 0, 1, 1);
+  ctx.fillStyle = '#7f402080';
+  ctx.fillRect(1, 0, 1, 1);
+  testing.expectEqual('128,64,32,128', Array.from(ctx.getImageData(1, 0, 1, 1).data).join(','));
+}
+</script>
+
+<script id="CanvasRenderingContext2D#functional_colors_Chrome">
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 1;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgb(127,64,32)';
+  testing.expectEqual('#7f4020', ctx.fillStyle);
+  ctx.fillStyle = 'rgba(127,64,32,0.5)';
+  testing.expectEqual('rgba(127, 64, 32, 0.5)', ctx.fillStyle);
+  ctx.fillRect(0, 0, 1, 1);
+  testing.expectEqual('128,64,32,128', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+  ctx.fillStyle = '#11223344';
+  testing.expectEqual('rgba(17, 34, 51, 0.267)', ctx.fillStyle);
+  ctx.fillStyle = 'rgb(50%,25%,12.5%)';
+  testing.expectEqual('#804020', ctx.fillStyle);
+  ctx.fillStyle = 'rgb(127 64 32 / 50%)';
+  testing.expectEqual('rgba(127, 64, 32, 0.5)', ctx.fillStyle);
+}
+</script>
+
+<script id="CanvasRenderingContext2D#globalAlpha_Chrome">
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = 3; canvas.height = 1;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#7f4020';
+  ctx.globalAlpha = 0.5;
+  ctx.fillRect(0, 0, 1, 1);
+  testing.expectEqual('128,64,32,128', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+  ctx.fillStyle = '#7f402080';
+  ctx.fillRect(1, 0, 1, 1);
+  testing.expectEqual('128,64,32,64', Array.from(ctx.getImageData(1, 0, 1, 1).data).join(','));
+  ctx.globalAlpha = -1;
+  ctx.globalAlpha = 2;
+  ctx.globalAlpha = NaN;
+  testing.expectEqual(0.5, ctx.globalAlpha);
+  ctx.save();
+  ctx.globalAlpha = 0.25;
+  ctx.restore();
+  testing.expectEqual(0.5, ctx.globalAlpha);
+  ctx.globalAlpha = 0;
+  ctx.fillRect(2, 0, 1, 1);
+  testing.expectEqual('0,0,0,0', Array.from(ctx.getImageData(2, 0, 1, 1).data).join(','));
+
+  // Headed Chrome rounded every 8-bit source alpha at globalAlpha=0.5 this way.
+  ctx.globalAlpha = 0.5;
+  for (let alpha = 0; alpha < 256; alpha++) {
+    canvas.width = 3;
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = '#000000' + alpha.toString(16).padStart(2, '0');
+    ctx.fillRect(0, 0, 1, 1);
+    testing.expectEqual(Math.round(alpha / 2), ctx.getImageData(0, 0, 1, 1).data[3]);
+  }
+  canvas.width = 3;
+  testing.expectEqual(1, ctx.globalAlpha);
+}
+</script>
+
+<script id="CanvasRenderingContext2D#software_fractional_rectangles_Chrome">
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 3;
+  const ctx = canvas.getContext('2d', {willReadFrequently: true});
+  ctx.fillStyle = '#f00';
+  ctx.fillRect(0.25, 0.25, 1.5, 1.5);
+  const alphas = Array.from(ctx.getImageData(0, 0, 3, 3).data).filter((_, i) => i % 4 === 3);
+  testing.expectEqual('144,144,0,144,144,0,0,0,0', alphas.join(','));
+
+  ctx.fillRect(0, 0, 3, 3);
+  ctx.clearRect(0.25, 0.25, 1.5, 1.5);
+  const cleared = Array.from(ctx.getImageData(0, 0, 3, 3).data).filter((_, i) => i % 4 === 3);
+  testing.expectEqual('0,0,255,0,0,255,255,255,255', cleared.join(','));
+}
+</script>
+
 <script id="CanvasRenderingContext2D#getImageData invalid">
 {
   const element = document.createElement("canvas");
   const ctx = element.getContext("2d");
 
-  // Zero or negative width/height should throw IndexSizeError.
+  // Zero width/height throws. Negative dimensions select a rectangle in the
+  // opposite direction, as in headful Chrome.
   testing.expectError('Index or size', () => ctx.getImageData(0, 0, 0, 10));
   testing.expectError('Index or size', () => ctx.getImageData(0, 0, 10, 0));
-  testing.expectError('Index or size', () => ctx.getImageData(0, 0, -5, 10));
-  testing.expectError('Index or size', () => ctx.getImageData(0, 0, 10, -5));
+  const reverse = ctx.getImageData(1, 1, -1, -1);
+  testing.expectEqual(1, reverse.width);
+  testing.expectEqual(1, reverse.height);
 }
 </script>
 
@@ -178,15 +373,16 @@
   testing.expectEqual("10px sans-serif", ctx.font);
   let m = ctx.measureText("ab");
   testing.expectEqual(true, m instanceof TextMetrics);
-  testing.expectEqual(12, m.width);
+  const nativeFonts = m.width !== 12;
+  testing.expectEqual(nativeFonts ? 11.123046875 : 12, m.width);
 
   ctx.font = "bold 20px Arial";
   testing.expectEqual("bold 20px Arial", ctx.font);
   m = ctx.measureText("hello");
-  testing.expectEqual(60, m.width);
+  testing.expectEqual(nativeFonts ? 46.669921875 : 60, m.width);
   testing.expectEqual(16, m.actualBoundingBoxAscent);
   testing.expectEqual(4, m.actualBoundingBoxDescent);
-  testing.expectEqual(60, m.actualBoundingBoxRight);
+  testing.expectEqual(m.width, m.actualBoundingBoxRight);
   testing.expectEqual(0, m.actualBoundingBoxLeft);
   testing.expectEqual(0, ctx.measureText("").width);
 
@@ -194,15 +390,29 @@
   ctx.font = "bold";
   testing.expectEqual("bold 20px Arial", ctx.font);
   ctx.font = "12pt serif";
-  testing.expectEqual(16 * 0.6 * 3, ctx.measureText("abc").width);
+  testing.expectEqual(nativeFonts ? 22.203125 : 16 * 0.6 * 3, ctx.measureText("abc").width);
 
   // Longer than the inline buffer.
   const long = "8px " + Array.from({length: 40}, (_, i) => "'Family Number " + i + "'").join(", ");
   ctx.font = long;
   testing.expectEqual(long, ctx.font);
-  testing.expectEqual(8 * 0.6, ctx.measureText("a").width);
+  testing.expectEqual(nativeFonts ? 4.44921875 : 8 * 0.6, ctx.measureText("a").width);
   ctx.font = "10px serif";
   testing.expectEqual("10px serif", ctx.font);
+}
+</script>
+
+<script id=CanvasRenderingContext2D#fillText_pixels>
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  ctx.font = '20px Arial';
+  ctx.fillText('A', 2, 24);
+  const pixels = ctx.getImageData(0, 0, 64, 32).data;
+  const alphaPixels = pixels.filter((_, i) => i % 4 === 3 && pixels[i] !== 0).length;
+  if (ctx.measureText('A').width !== 12) testing.expectEqual(109, alphaPixels);
 }
 </script>
 

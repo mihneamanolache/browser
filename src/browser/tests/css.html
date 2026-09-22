@@ -5,6 +5,11 @@
   testing.expectEqual('object', typeof CSS);
   testing.expectEqual('function', typeof CSS.escape);
   testing.expectEqual('function', typeof CSS.supports);
+  const descriptor = Object.getOwnPropertyDescriptor(window, 'CSS');
+  testing.expectEqual('object', typeof descriptor.value);
+  testing.expectEqual(false, descriptor.enumerable);
+  testing.expectEqual(true, descriptor.writable);
+  testing.expectEqual(true, descriptor.configurable);
 </script>
 
 <script id="entries">

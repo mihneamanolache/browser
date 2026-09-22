@@ -36,6 +36,7 @@ pub const Runner = @import("Runner.zig");
 const Notification = @import("../Notification.zig");
 const QueuedNavigation = Frame.QueuedNavigation;
 const SharedWorkerGlobalScope = @import("webapi/SharedWorkerGlobalScope.zig");
+const ServiceWorkerGlobalScope = @import("webapi/ServiceWorkerGlobalScope.zig");
 
 const log = lp.log;
 const ArenaPool = App.ArenaPool;
@@ -73,6 +74,9 @@ pages: std.ArrayList(*Page) = .empty,
 // `new SharedWorker(url, name)` in the session connects to the same instance.
 // Owned by the Page that creates it.
 shared_workers: std.StringHashMapUnmanaged(*SharedWorkerGlobalScope) = .empty,
+
+// Live service-worker registrations keyed by resolved scope URL.
+service_workers: std.StringHashMapUnmanaged(*ServiceWorkerGlobalScope) = .empty,
 
 _page_destruction_queue: std.ArrayList(*Page) = .empty,
 

@@ -529,6 +529,7 @@ pub const InterceptState = struct {
             .stylesheet => .Stylesheet,
             .eventsource => .EventSource,
             .image => .Image,
+            .font => .Font,
             .ping => .Ping,
         };
     }

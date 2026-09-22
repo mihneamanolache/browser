@@ -30,6 +30,7 @@ const Blob = @import("webapi/Blob.zig");
 const Node = @import("webapi/Node.zig");
 const Element = @import("webapi/Element.zig");
 const SharedWorkerGlobalScope = @import("webapi/SharedWorkerGlobalScope.zig");
+const ServiceWorkerGlobalScope = @import("webapi/ServiceWorkerGlobalScope.zig");
 const PointList = @import("webapi/svg/PointList.zig");
 const StringList = @import("webapi/svg/StringList.zig");
 const AnimatedEnumeration = @import("webapi/svg/AnimatedEnumeration.zig");
@@ -202,6 +203,10 @@ closed_frames: std.ArrayList(*Frame) = .empty,
 // session.shared_workers so other pages can connect).
 shared_workers: std.ArrayList(*SharedWorkerGlobalScope) = .empty,
 
+// Service workers created by this Page. The Session registry makes them
+// discoverable by every frame while this page remains alive.
+service_workers: std.ArrayList(*ServiceWorkerGlobalScope) = .empty,
+
 // In-flight navigation for a root page. When not null, this page will "replace"
 // the referenced page once the response header arrives. This is necessary
 // because, during navigation, both the "old" and "new" pages remain addressable
@@ -256,6 +261,14 @@ pub fn init(self: *Page, session: *Session, frame_id: u32) !void {
 // Tear down the Page and its root Frame. Equivalent to the old
 // Session.removePage + Session.resetFrameResources.
 pub fn deinit(self: *Page) void {
+    // Service workers retain the creating Frame for request attribution and
+    // their registration/ready promises belong to its Window realm. Tear them
+    // down before any frame so cancellation never dereferences a dead context.
+    for (self.service_workers.items) |scope| {
+        scope.deinit();
+    }
+    self.service_workers = .empty;
+
     for (self.popups.items) |popup| {
         popup.deinit();
     }

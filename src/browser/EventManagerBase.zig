@@ -242,6 +242,9 @@ pub fn dispatchDirect(
     event.acquireRef();
     defer _ = event.releaseRef(page);
 
+    event._event_phase = .at_target;
+    defer event._event_phase = .none;
+
     if (comptime opts.inject_target) {
         event._target = target;
         event._dispatch_target = target;

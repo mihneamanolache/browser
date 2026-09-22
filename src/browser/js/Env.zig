@@ -32,6 +32,7 @@ const Window = @import("../webapi/Window.zig");
 const WorkerGlobalScope = @import("../webapi/WorkerGlobalScope.zig");
 const SharedWorkerGlobalScope = @import("../webapi/SharedWorkerGlobalScope.zig");
 const DedicatedWorkerGlobalScope = @import("../webapi/DedicatedWorkerGlobalScope.zig");
+const ServiceWorkerGlobalScope = @import("../webapi/ServiceWorkerGlobalScope.zig");
 
 const v8 = js.v8;
 const log = lp.log;
@@ -293,10 +294,11 @@ fn _createContext(self: *Env, global: anytype, params: ContextParams) !*Context 
     };
 
     // Restore the context from the snapshot
-    // (0 = Page, 1 = DedicatedWorker, 2 = SharedWorker)
+    // (0 = Page, 1 = DedicatedWorker, 2 = SharedWorker, 3 = ServiceWorker)
     const snapshot_index: u32 = if (comptime is_frame) 0 else switch (global._type) {
         .dedicated => 1,
         .shared => 2,
+        .service => 3,
     };
     const v8_context = v8.v8__Context__FromSnapshot__Config(isolate.handle, snapshot_index, &.{
         .global_template = null,
@@ -310,6 +312,16 @@ fn _createContext(self: *Env, global: anytype, params: ContextParams) !*Context 
 
     // Get the global object for the context
     const global_obj = v8.v8__Context__Global(v8_context).?;
+
+    // V8 recreates its built-ins when a context is restored from the
+    // snapshot. Chrome exposes SharedArrayBuffer only in a cross-origin
+    // isolated realm; Lightpanda currently reports crossOriginIsolated=false
+    // and does not implement COOP+COEP isolation, so the constructor must be
+    // absent rather than usable in a contradictory state.
+    const sab_key = v8.v8__String__NewFromUtf8(isolate.handle, "SharedArrayBuffer", v8.kNormal, 17);
+    var sab_deleted: v8.MaybeBool = undefined;
+    v8.v8__Object__Delete(global_obj, v8_context, sab_key, &sab_deleted);
+    if (sab_deleted.value == false) return error.SharedArrayBufferDeleteError;
 
     // Store our TAO inside the internal field of the global object. This
     // maps the v8::Object -> Zig instance.
@@ -330,6 +342,12 @@ fn _createContext(self: *Env, global: anytype, params: ContextParams) !*Context 
             .value = @ptrCast(scope),
             .prototype_chain = (&SharedWorkerGlobalScope.JsApi.Meta.prototype_chain).ptr,
             .prototype_len = @intCast(SharedWorkerGlobalScope.JsApi.Meta.prototype_chain.len),
+            .subtype = null,
+        },
+        .service => |scope| .{
+            .value = @ptrCast(scope),
+            .prototype_chain = (&ServiceWorkerGlobalScope.JsApi.Meta.prototype_chain).ptr,
+            .prototype_len = @intCast(ServiceWorkerGlobalScope.JsApi.Meta.prototype_chain.len),
             .subtype = null,
         },
     };
@@ -392,6 +410,24 @@ fn _createContext(self: *Env, global: anytype, params: ContextParams) !*Context 
     // Store a pointer to our context inside the v8 context so that, given
     // a v8 context, we can get our context out
     v8.v8__Context__SetAlignedPointerInEmbedderData(v8_context, 1, @ptrCast(context));
+
+    // Chromium exposes these namespace objects as own data properties on
+    // Window rather than as Web IDL accessors. Install the live per-window
+    // instances after restoring the snapshot, when the Zig objects and the
+    // context identity map are both available.
+    if (comptime is_frame) {
+        var ls: js.Local.Scope = undefined;
+        context.localScope(&ls);
+        defer ls.deinit();
+
+        const window_global = context.globalObject(&ls.local);
+        const console_value = try ls.local.zigValueToJs(&global.window._console, .{});
+        const css_value = try ls.local.zigValueToJs(&global.window._css, .{});
+        const chrome_value = try ls.local.zigValueToJs(&global.window._chrome, .{});
+        if (window_global.defineOwnProperty("console", console_value, v8.DontEnum) != true) return error.GlobalNamespaceInstallError;
+        if (window_global.defineOwnProperty("CSS", css_value, v8.DontEnum) != true) return error.GlobalNamespaceInstallError;
+        if (window_global.defineOwnProperty("chrome", chrome_value, v8.DontDelete) != true) return error.GlobalNamespaceInstallError;
+    }
 
     if (self.contexts.items.len >= MAX_CONTEXTS) {
         return error.TooManyContexts;
@@ -769,10 +805,23 @@ test "Env: Worker context " {
     try testing.expectEqual(true, (try ls.local.exec("self.constructor.name === 'DedicatedWorkerGlobalScope'", null)).isTrue());
     try testing.expectEqual(true, (try ls.local.exec("self === globalThis", null)).isTrue());
 
-    // postMessage/close/onmessage live on DedicatedWorkerGlobalScope.prototype
-    // (per spec), not on WorkerGlobalScope.prototype.
-    try testing.expectEqual(true, (try ls.local.exec("DedicatedWorkerGlobalScope.prototype.hasOwnProperty('postMessage')", null)).isTrue());
+    // [Global] flattening: the members of the *concrete* global interface are
+    // own properties of the global object and are absent from its prototype,
+    // while every inherited interface keeps its members on its own prototype.
+    // Measured in Chrome for Testing 151, whose worker chain is
+    //   global(336 own, incl. postMessage/close/onmessage/name)
+    //     -> DedicatedWorkerGlobalScope.prototype { PERSISTENT, TEMPORARY, constructor }
+    //     -> WorkerGlobalScope.prototype { fetch, atob, self, location, ... }
+    //     -> EventTarget.prototype { addEventListener, ... }
+    // so `Object.getOwnPropertyNames(self).includes('fetch')` is false in a
+    // worker even though it is true in a window.
+    try testing.expectEqual(true, (try ls.local.exec("Object.getOwnPropertyNames(self).includes('postMessage')", null)).isTrue());
+    try testing.expectEqual(true, (try ls.local.exec("!DedicatedWorkerGlobalScope.prototype.hasOwnProperty('postMessage')", null)).isTrue());
     try testing.expectEqual(true, (try ls.local.exec("!WorkerGlobalScope.prototype.hasOwnProperty('postMessage')", null)).isTrue());
+    try testing.expectEqual(true, (try ls.local.exec("WorkerGlobalScope.prototype.hasOwnProperty('fetch')", null)).isTrue());
+    try testing.expectEqual(true, (try ls.local.exec("!Object.getOwnPropertyNames(self).includes('fetch')", null)).isTrue());
+    // CookieStore is Window + ServiceWorker only; never a dedicated worker.
+    try testing.expectEqual(true, (try ls.local.exec("typeof self.cookieStore === 'undefined'", null)).isTrue());
 
     // AnimationFrameProvider mixin is exposed on the dedicated worker global.
     try testing.expectEqual(true, (try ls.local.exec("typeof self.requestAnimationFrame === 'function'", null)).isTrue());

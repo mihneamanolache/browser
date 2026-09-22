@@ -803,6 +803,9 @@ pub const Function = struct {
         exposed: Exposed = .both,
         ce_reactions: bool = false,
         js_name: ?[:0]const u8 = null,
+        /// Override the JavaScript-visible `length` when the implementation
+        /// signature cannot express Web IDL's required-argument count.
+        arity: ?usize = null,
         unforgeable: bool = false,
 
         pub const Exposed = enum { both, window, worker };

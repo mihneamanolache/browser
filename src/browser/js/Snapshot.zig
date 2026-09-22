@@ -34,6 +34,7 @@ const JsApis = bridge.JsApis;
 const PageJsApis = bridge.PageJsApis;
 const SharedWorkerJsApis = bridge.SharedWorkerJsApis;
 const DedicatedWorkerJsApis = bridge.DedicatedWorkerJsApis;
+const ServiceWorkerJsApis = bridge.ServiceWorkerJsApis;
 
 const Snapshot = @This();
 
@@ -162,7 +163,7 @@ pub fn create() !Snapshot {
         // Create templates for ALL types (JsApis)
         var templates: [JsApis.len]*const v8.FunctionTemplate = undefined;
         inline for (JsApis, 0..) |JsApi, i| {
-            @setEvalBranchQuota(10_000);
+            @setEvalBranchQuota(200_000);
             templates[i] = generateConstructor(JsApi, isolate);
             attachClass(JsApi, false, isolate, templates[i], null);
         }
@@ -183,7 +184,7 @@ pub fn create() !Snapshot {
 
             var last_data_index: usize = 0;
             inline for (JsApis, 0..) |_, i| {
-                @setEvalBranchQuota(10_000);
+                @setEvalBranchQuota(200_000);
                 const data_index = v8.v8__SnapshotCreator__AddData(snapshot_creator, @ptrCast(templates[i]));
                 if (i == 0) {
                     data_start = data_index;
@@ -218,6 +219,12 @@ pub fn create() !Snapshot {
             const SharedWorkerGlobalScope = @import("../webapi/SharedWorkerGlobalScope.zig");
             const index = try createSnapshotContext(.worker, &SharedWorkerJsApis, SharedWorkerGlobalScope.JsApi, isolate, snapshot_creator.?, &templates);
             std.debug.assert(index == 2);
+        }
+
+        {
+            const ServiceWorkerGlobalScope = @import("../webapi/ServiceWorkerGlobalScope.zig");
+            const index = try createSnapshotContext(.worker, &ServiceWorkerJsApis, ServiceWorkerGlobalScope.JsApi, isolate, snapshot_creator.?, &templates);
+            std.debug.assert(index == 3);
         }
     }
 
@@ -278,18 +285,32 @@ fn createSnapshotContext(
     // Re-run attachClass, but specifically targetting the global (Window or WGS)
     // templates, so that all of these getters/functions which are already defined
     // on their prototype will now be defined directly on the object.
+    //
+    // Only the MOST-DERIVED interface is flattened. Chrome flattens the concrete
+    // global interface and leaves every inherited one on its own prototype --
+    // measured against Chrome for Testing 151:
+    //
+    //   window : fetch/atob/self/location  -> own property of window
+    //            addEventListener          -> EventTarget.prototype
+    //   worker : postMessage/close/name    -> own property of the global
+    //            fetch/atob/self/location  -> WorkerGlobalScope.prototype
+    //            addEventListener          -> EventTarget.prototype
+    //
+    // Flattening the whole chain was invisible for Window, whose only ancestor
+    // is EventTarget (already excluded), but it hoisted all 21 WorkerGlobalScope
+    // members onto the worker global. `Object.getOwnPropertyNames(self)
+    // .includes('fetch')` is true in Chrome for a window and false for a worker,
+    // so getting this wrong is a one-line tell inside any worker.
     inline for (comptime globalScopeChain(GlobalScopeApi)) |ScopeApi| {
-        // ScopeApi is going to be Window, EventTarget
-        // Or WorkerGlobalState, EventTarget
         comptime {
-            //
             if (hasGatedMember(ScopeApi)) {
                 @compileError("[Global] scope interface " ++ @typeName(ScopeApi) ++ " has [Exposed]-gated members. This is not supported");
             }
         }
+    }
+    {
+        const ScopeApi = comptime globalScopeChain(GlobalScopeApi)[0];
         const scope_index = comptime bridge.JsApiLookup.getId(ScopeApi);
-        // So we're attaching the Window/EventTarget members (which were already attached
-        // to it's prototype), directly on the global_template.
         attachClass(ScopeApi, true, isolate, templates[scope_index], global_template);
     }
 
@@ -308,20 +329,22 @@ fn createSnapshotContext(
     const prototype_key = v8.v8__String__NewFromUtf8(isolate, "prototype", v8.kNormal, 9);
 
     inline for (ContextApis) |JsApi| {
-        @setEvalBranchQuota(10_000);
+        @setEvalBranchQuota(200_000);
         const template_index = comptime bridge.JsApiLookup.getId(JsApi);
         const func = v8.v8__FunctionTemplate__GetFunction(templates[template_index], context);
-        if (@hasDecl(JsApi.Meta, "name")) {
+        if (@hasDecl(JsApi.Meta, "name") and
+            (!@hasDecl(JsApi.Meta, "expose_global") or JsApi.Meta.expose_global))
+        {
             if (@hasDecl(JsApi.Meta, "constructor_alias")) {
                 const alias = JsApi.Meta.constructor_alias;
                 const v8_class_name = v8.v8__String__NewFromUtf8(isolate, alias.ptr, v8.kNormal, @intCast(alias.len));
                 var maybe_result: v8.MaybeBool = undefined;
-                v8.v8__Object__Set(global_obj, context, v8_class_name, func, &maybe_result);
+                v8.v8__Object__DefineOwnProperty(global_obj, context, v8_class_name, func, v8.DontEnum, &maybe_result);
 
                 const name = JsApi.Meta.name;
                 const illegal_class_name = v8.v8__String__NewFromUtf8(isolate, name.ptr, v8.kNormal, @intCast(name.len));
                 var maybe_result2: v8.MaybeBool = undefined;
-                v8.v8__Object__DefineOwnProperty(global_obj, context, illegal_class_name, func, 0, &maybe_result2);
+                v8.v8__Object__DefineOwnProperty(global_obj, context, illegal_class_name, func, v8.DontEnum, &maybe_result2);
             } else {
                 const name = JsApi.Meta.name;
                 const v8_class_name = v8.v8__String__NewFromUtf8(isolate, name.ptr, v8.kNormal, @intCast(name.len));
@@ -352,13 +375,13 @@ fn createSnapshotContext(
     }
 
     {
-        // Delete built-in console so we can inject our own
+        // V8 installs its own console as an own global property after applying
+        // the ObjectTemplate. Remove it; Env installs our live per-window
+        // console as a Chrome-shaped own data property after context restore.
         const console_key = v8.v8__String__NewFromUtf8(isolate, "console", v8.kNormal, 7);
         var maybe_deleted: v8.MaybeBool = undefined;
         v8.v8__Object__Delete(global_obj, context, console_key, &maybe_deleted);
-        if (maybe_deleted.value == false) {
-            return error.ConsoleDeleteError;
-        }
+        if (maybe_deleted.value == false) return error.ConsoleDeleteError;
     }
 
     // Set prototype chains on function objects
@@ -374,6 +397,23 @@ fn createSnapshotContext(
             var maybe_result: v8.MaybeBool = undefined;
             v8.v8__Object__SetPrototype(self_obj, context, proto_obj, &maybe_result);
         }
+    }
+
+    {
+        // Chrome exposes the WebGL 1 surface as own properties of both
+        // WebGLRenderingContext.prototype and WebGL2RenderingContext.prototype.
+        // Their descriptors match in the measured headful build. Our Zig
+        // WebGL2 type inherits WebGL1 for behavior, so mirror those descriptors
+        // on its prototype as well for Web IDL reflection parity.
+        const code_str =
+            "if (typeof WebGL2RenderingContext === 'function') {" ++
+            "const d = Object.getOwnPropertyDescriptors(WebGLRenderingContext.prototype);" ++
+            "delete d.constructor;" ++
+            "Object.defineProperties(WebGL2RenderingContext.prototype, d);" ++
+            "}";
+        const code = v8.v8__String__NewFromUtf8(isolate, code_str.ptr, v8.kNormal, @intCast(code_str.len));
+        const script = v8.v8__Script__Compile(context, code, null) orelse return error.ScriptCompileFailed;
+        _ = v8.v8__Script__Run(script, context) orelse return error.ScriptRunFailed;
     }
 
     {
@@ -474,11 +514,9 @@ fn countExternalReferences() comptime_int {
         }
     }
 
-    if (comptime lp.IS_DEBUG) {
-        inline for (JsApis) |JsApi| {
-            if (!hasNamedIndexedGetter(JsApi)) {
-                count += 1;
-            }
+    inline for (JsApis) |JsApi| {
+        if (!hasNamedIndexedGetter(JsApi)) {
+            count += 1;
         }
     }
 
@@ -505,12 +543,12 @@ fn collectExternalReferences() [countExternalReferences()]isize {
 
     inline for (JsApis) |JsApi| {
         if (@hasDecl(JsApi, "constructor")) {
-            references[idx] = @bitCast(@intFromPtr(JsApi.constructor.func));
+            references[idx] = @bitCast(@intFromPtr(bridge.tracedCallback(JsApi, "constructor", "construct", JsApi.constructor.func)));
             idx += 1;
         }
 
         if (@hasDecl(JsApi, "callable")) {
-            references[idx] = @bitCast(@intFromPtr(JsApi.callable.func));
+            references[idx] = @bitCast(@intFromPtr(bridge.tracedCallback(JsApi, "[[Call]]", "call", JsApi.callable.func)));
             idx += 1;
         }
 
@@ -523,20 +561,21 @@ fn collectExternalReferences() [countExternalReferences()]isize {
                     continue;
                 }
 
-                references[idx] = @bitCast(@intFromPtr(value.getter));
+                references[idx] = @bitCast(@intFromPtr(bridge.tracedCallback(JsApi, d.name, "get", value.getter.?)));
                 idx += 1;
                 if (value.setter) |setter| {
-                    references[idx] = @bitCast(@intFromPtr(setter));
+                    references[idx] = @bitCast(@intFromPtr(bridge.tracedCallback(JsApi, d.name, "set", setter)));
                     idx += 1;
                 }
             } else if (T == bridge.Function) {
                 if (value.wpt_only and wpt_extensions_enabled == false) {
                     continue;
                 }
-                references[idx] = @bitCast(@intFromPtr(value.func));
+                references[idx] = @bitCast(@intFromPtr(bridge.tracedCallback(JsApi, d.name, "call", value.func)));
                 idx += 1;
             } else if (T == bridge.Iterator) {
-                references[idx] = @bitCast(@intFromPtr(value.func));
+                const member = if (value.async) "@@asyncIterator" else "@@iterator";
+                references[idx] = @bitCast(@intFromPtr(bridge.tracedCallback(JsApi, member, "call", value.func)));
                 idx += 1;
             } else if (T == bridge.Indexed) {
                 references[idx] = @bitCast(@intFromPtr(value.getter));
@@ -592,15 +631,12 @@ fn collectExternalReferences() [countExternalReferences()]isize {
         }
     }
 
-    // @LOG-UNKNOWN-PROPERTY
-    // if (comptime lp.IS_DEBUG) {
-    //     inline for (JsApis) |JsApi| {
-    //         if (!hasNamedIndexedGetter(JsApi)) {
-    //             references[idx] = @bitCast(@intFromPtr(bridge.unknownObjectPropertyCallback(JsApi)));
-    //             idx += 1;
-    //         }
-    //     }
-    // }
+    inline for (JsApis) |JsApi| {
+        if (!hasNamedIndexedGetter(JsApi)) {
+            references[idx] = @bitCast(@intFromPtr(bridge.unknownObjectPropertyCallback(JsApi)));
+            idx += 1;
+        }
+    }
 
     return references;
 }
@@ -666,7 +702,22 @@ fn illegalConstructorCallback(raw_info: ?*const v8.FunctionCallbackInfo) callcon
     }
     log.info(.js, "Illegal constructor call", .{ .name = name });
 
-    const message = v8.v8__String__NewFromUtf8(isolate, "Illegal Constructor", v8.kNormal, 19);
+    // Chrome's exact text, measured from Chrome 151 across 37 such interfaces:
+    //
+    //   Failed to construct 'Cache': Illegal constructor
+    //
+    // We used to throw a bare "Illegal Constructor" -- no prefix, and a
+    // capital C that Chrome does not use. Both are readable from script via
+    // the caught TypeError's .message, on every interface we expose without a
+    // constructor, so the old string was a tell on all of them at once.
+    var message_buf: [192]u8 = undefined;
+    const text = std.fmt.bufPrint(
+        &message_buf,
+        "Failed to construct '{s}': Illegal constructor",
+        .{name},
+    ) catch "Illegal constructor";
+
+    const message = v8.v8__String__NewFromUtf8(isolate, text.ptr, v8.kNormal, @intCast(text.len));
     const js_exception = v8.v8__Exception__TypeError(message);
 
     _ = v8.v8__Isolate__ThrowException(isolate, js_exception);
@@ -708,7 +759,7 @@ fn protoIndexLookup(comptime JsApi: type) ?u16 {
 fn generateConstructor(comptime JsApi: type, isolate: *v8.Isolate) *const v8.FunctionTemplate {
     const callback, const arity = comptime blk: {
         if (@hasDecl(JsApi, "constructor")) {
-            break :blk .{ JsApi.constructor.func, JsApi.constructor.arity };
+            break :blk .{ bridge.tracedCallback(JsApi, "constructor", "construct", JsApi.constructor.func), JsApi.constructor.arity };
         }
         if (inheritsFromHtmlElement(JsApi)) {
             break :blk .{ HtmlElement.JsApi.upgrade_constructor.func, @as(c_int, HtmlElement.JsApi.upgrade_constructor.arity) };
@@ -771,6 +822,16 @@ fn attachClass(comptime JsApi: type, comptime flatten: bool, isolate: *v8.Isolat
         const value = @field(JsApi, name);
         const definition = @TypeOf(value);
 
+        // [Global] interfaces such as Window expose their operations and
+        // attributes directly on the global object. They are mirrored by the
+        // flattening pass below and must not also appear on Window.prototype.
+        if (comptime !flatten and @hasDecl(JsApi.Meta, "global_only_members") and JsApi.Meta.global_only_members) {
+            switch (definition) {
+                bridge.Accessor, bridge.Function => if (!value.static) continue,
+                else => {},
+            }
+        }
+
         if (comptime flatten) {
             // [Global] flattening only mirrors non-static accessors/methods onto itself
             switch (definition) {
@@ -794,7 +855,7 @@ fn attachClass(comptime JsApi: type, comptime flatten: bool, isolate: *v8.Isolat
                 // attributes are own properties too, not just its methods.
                 // window.chrome is a plain object, so Object.keys(chrome) has
                 // to list `app` alongside csi and loadTimes.
-                attachAccessorProperty(name, value, isolate, template, signature, define_on orelse member_template);
+                attachAccessorProperty(JsApi, name, value, isolate, template, signature, define_on orelse member_template);
             },
             bridge.Function => {
                 if (value.wpt_only and wpt_extensions_enabled == false) {
@@ -805,7 +866,7 @@ fn attachClass(comptime JsApi: type, comptime flatten: bool, isolate: *v8.Isolat
                 // receiver, unless the operation has to reject rather than throw.
                 const func_signature = if (value.static or value.rejects_bad_receiver) null else signature;
                 const function_template = v8.v8__FunctionTemplate__New__Config(isolate, &.{
-                    .callback = value.func,
+                    .callback = bridge.tracedCallback(JsApi, name, "call", value.func),
                     .length = value.arity,
                     .signature = func_signature,
                 }).?;
@@ -852,7 +913,10 @@ fn attachClass(comptime JsApi: type, comptime flatten: bool, isolate: *v8.Isolat
                 has_named_index_getter = true;
             },
             bridge.Iterator => {
-                const function_template = v8.v8__FunctionTemplate__New__Config(isolate, &.{ .callback = value.func }).?;
+                const member = if (value.async) "@@asyncIterator" else "@@iterator";
+                const function_template = v8.v8__FunctionTemplate__New__Config(isolate, &.{
+                    .callback = bridge.tracedCallback(JsApi, member, "call", value.func),
+                }).?;
                 const js_name = if (value.async)
                     v8.v8__Symbol__GetAsyncIterator(isolate)
                 else
@@ -886,7 +950,7 @@ fn attachClass(comptime JsApi: type, comptime flatten: bool, isolate: *v8.Isolat
             if (comptime bridge.inheritsOrIs(JsApi, u.Owner)) {
                 // unforgeables attributes aren't only applied directly on the
                 // instance, they're also applied directly on every child instance
-                attachAccessorProperty(u.name, u.accessor, isolate, template, signature, instance);
+                attachAccessorProperty(u.Owner, u.name, u.accessor, isolate, template, signature, instance);
             }
         }
     }
@@ -898,7 +962,7 @@ fn attachClass(comptime JsApi: type, comptime flatten: bool, isolate: *v8.Isolat
 
     if (@hasDecl(JsApi.Meta, "htmldda")) {
         v8.v8__ObjectTemplate__MarkAsUndetectable(instance);
-        v8.v8__ObjectTemplate__SetCallAsFunctionHandler(instance, JsApi.Meta.callable.func);
+        v8.v8__ObjectTemplate__SetCallAsFunctionHandler(instance, bridge.tracedCallback(JsApi, "[[Call]]", "call", JsApi.Meta.callable.func));
     }
 
     if (@hasDecl(JsApi.Meta, "name")) {
@@ -911,23 +975,20 @@ fn attachClass(comptime JsApi: type, comptime flatten: bool, isolate: *v8.Isolat
         v8.v8__Template__Set(@ptrCast(member_template), js_name, js_value, v8.ReadOnly + v8.DontEnum);
     }
 
-    // @LOG-UNKNOWN-PROPERTY
-    // if (comptime lp.IS_DEBUG) {
-    //     if (!has_named_index_getter) {
-    //         var configuration: v8.NamedPropertyHandlerConfiguration = .{
-    //             .getter = bridge.unknownObjectPropertyCallback(JsApi),
-    //             .setter = null,
-    //             .query = null,
-    //             .deleter = null,
-    //             .enumerator = null,
-    //             .definer = null,
-    //             .descriptor = null,
-    //             .data = null,
-    //             .flags = v8.kOnlyInterceptStrings | v8.kNonMasking,
-    //         };
-    //         v8.v8__ObjectTemplate__SetNamedHandler(instance, &configuration);
-    //     }
-    // }
+    if (!has_named_index_getter) {
+        var configuration: v8.NamedPropertyHandlerConfiguration = .{
+            .getter = bridge.unknownObjectPropertyCallback(JsApi),
+            .setter = null,
+            .query = null,
+            .deleter = null,
+            .enumerator = null,
+            .definer = null,
+            .descriptor = null,
+            .data = null,
+            .flags = v8.kOnlyInterceptStrings | v8.kNonMasking,
+        };
+        v8.v8__ObjectTemplate__SetNamedHandler(instance, &configuration);
+    }
 }
 
 // The chain of interface types reachable from a [Global] interface via WebIDL
@@ -967,11 +1028,11 @@ const unforgeables: []const Unforgeable = blk: {
 // and define_on != null. This is the "flattening" pass, and it defines all of
 // the functions/accessors on directly on the global instance. Thus, globals have
 // it defined on both their prototype (first pass) and their own instance (2nd pass).
-fn attachAccessorProperty(comptime name: [:0]const u8, value: bridge.Accessor, isolate: *v8.Isolate, template: *const v8.FunctionTemplate, signature: anytype, target: anytype) void {
+fn attachAccessorProperty(comptime JsApi: type, comptime name: [:0]const u8, comptime value: bridge.Accessor, isolate: *v8.Isolate, template: *const v8.FunctionTemplate, signature: anytype, target: anytype) void {
     const js_name = v8.v8__String__NewFromUtf8(isolate, name.ptr, v8.kNormal, @intCast(name.len));
     const getter_signature = if (value.static) null else signature;
     const getter_callback = v8.v8__FunctionTemplate__New__Config(isolate, &.{
-        .callback = value.getter,
+        .callback = bridge.tracedCallback(JsApi, name, "get", value.getter.?),
         .signature = getter_signature,
     }).?;
     // WebIDL: getter function's .name should be "get X"
@@ -981,7 +1042,7 @@ fn attachAccessorProperty(comptime name: [:0]const u8, value: bridge.Accessor, i
 
     const setter_callback = if (value.setter) |setter| blk: {
         const cb = v8.v8__FunctionTemplate__New__Config(isolate, &.{
-            .callback = setter,
+            .callback = bridge.tracedCallback(JsApi, name, "set", setter),
             .signature = getter_signature,
             .length = 1,
         }).?;

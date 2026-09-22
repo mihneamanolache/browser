@@ -116,6 +116,13 @@ pub fn rendererFor(frame: *Frame) !*Renderer {
     return r;
 }
 
+/// Uses the same platform font inventory as a native renderer. This is kept
+/// here with the rest of the Rust rendering ABI so CSS font loading does not
+/// grow a second platform-specific bridge.
+pub fn systemFontAvailable(name: []const u8) bool {
+    return lp_system_font_available(name.ptr, name.len);
+}
+
 pub fn png(arena: Allocator, state: RenderTree.State, opts: Opts, writer: *std.Io.Writer, frame: *Frame) !u32 {
     const prepared = try preparePng(arena, state, opts, frame);
     return prepared.write(writer);
@@ -547,6 +554,7 @@ const MUTED_COLOR: u32 = 0x6b6b6b;
 
 extern "c" fn lp_render_new() ?*Renderer;
 extern "c" fn lp_render_free(r: *Renderer) void;
+extern "c" fn lp_system_font_available(name: [*]const u8, len: usize) bool;
 extern "c" fn lp_render_png(
     r: *Renderer,
     blocks: [*]const LpBlock,

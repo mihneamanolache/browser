@@ -816,6 +816,10 @@ pub fn navigate(self: *Frame, request_url: [:0]const u8, opts: NavigateOpts) !vo
         // Ours until submit; clean up if header setup fails.
         errdefer transfer.deinit();
         try transfer.setHeader("Accept", lp.Config.HttpHeaders.navigation_accept, .{});
+        // Chromium attaches the RFC 9218 navigation priority to top-level and
+        // subframe document requests. Besides affecting scheduling, its
+        // absence is directly observable in HTTP/2 fingerprint captures.
+        try transfer.setHeader("Priority", "u=0, i", .{});
         if (opts.header) |hdr| {
             // Arrives pre-joined ("Name: Value"), e.g. from the CLI.
             if (HttpClient.Header.parse(hdr)) |parsed| {
@@ -1202,6 +1206,7 @@ pub fn documentIsLoaded(self: *Frame) void {
 
     self._load_state = .load;
     self.document._ready_state = .interactive;
+    self.window._performance.markDomInteractive();
     self._documentIsLoaded() catch |err| switch (err) {
         error.JsException => {}, // already logged
         else => log.err(.frame, "document is loaded2", .{ .err = err, .type = self._type, .url = self.url }),
@@ -1212,11 +1217,13 @@ fn _documentIsLoaded(self: *Frame) !void {
     try self.dispatchReadyStateChange();
     if (self.loadEventsAborted()) return;
 
+    self.window._performance.markDomContentLoadedStart();
     const event = try Event.initTrusted(.wrap("DOMContentLoaded"), .{ .bubbles = true }, self.page);
     try self._event_manager.dispatch(
         self.document.asEventTarget(),
         event,
     );
+    self.window._performance.markDomContentLoadedEnd();
 
     self._session.notification.dispatch(.frame_dom_content_loaded, &.{
         .req_id = self._req_id,
@@ -1321,6 +1328,7 @@ fn _documentIsComplete(self: *Frame) !void {
     // abortedDocumentIsComplete may already have done this half.
     if (self.document._ready_state != .complete) {
         self.document._ready_state = .complete;
+        self.window._performance.markDomComplete();
         try self.dispatchReadyStateChange();
     }
     if (self.loadEventsAborted()) return;
@@ -1331,6 +1339,7 @@ fn _documentIsComplete(self: *Frame) !void {
 
     // Dispatch window.load event.
     const window_target = self.window.asEventTarget();
+    self.window._performance.markLoadStart();
     if (self._event_manager.hasDirectListeners(window_target, "load", self.window._on_load)) {
         const event = try Event.initTrusted(comptime .wrap("load"), .{}, self.page);
         // This event is weird, it's dispatched directly on the window, but
@@ -1338,6 +1347,7 @@ fn _documentIsComplete(self: *Frame) !void {
         event._target = self.document.asEventTarget();
         try self._event_manager.dispatchDirect(window_target, event, self.window._on_load, .{ .inject_target = false, .context = "page load" });
     }
+    self.window._performance.markLoadEnd();
 
     self._session.notification.dispatch(.frame_loaded, &.{
         .req_id = self._req_id,
@@ -3964,6 +3974,23 @@ test "Frame: readystatechange during an aborted load may renavigate or throw" {
     try testing.expectEqual(1, frame.page.queued_navigation.items.len);
     frame.documentIsComplete();
     try testing.expectEqual("complete", try (try ls.local.exec("events.join('|')", null)).toStringSlice());
+}
+
+test "Frame: script navigation preserves opaque query tokens byte-for-byte" {
+    const page = try testing.pageTest("hi.html", .{});
+    defer page.close();
+    const frame = page.frame().?;
+    var ls: JS.Local.Scope = undefined;
+    frame.js.localScope(&ls);
+    defer ls.deinit();
+
+    const plain = "https://example.test/search?q=sample+company&sourceid=chrome&ie=UTF-8";
+    try ls.local.eval("location.assign('" ++ plain ++ "');", null);
+    try testing.expectEqual(plain, frame._queued_navigation.?.url);
+
+    const target = plain ++ "&sei=opaque_-Token123";
+    try ls.local.eval("location.assign('" ++ target ++ "');", null);
+    try testing.expectEqual(target, frame._queued_navigation.?.url);
 }
 
 test "Frame: document.open cancels the queued navigation without reviving load" {

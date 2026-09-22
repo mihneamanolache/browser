@@ -213,16 +213,16 @@ pub const RGBA = packed struct(u32) {
         };
     }
 
-    /// Parses the given color.
-    /// Currently we only parse hex colors and named colors; other variants
-    /// require CSS evaluation.
+    /// Parses the common sRGB CSS color forms used by canvas styles.
     pub fn parse(input: []const u8) !RGBA {
-        if (!isHexColor(input)) {
+        const value = std.mem.trim(u8, input, " \t\n\r");
+        if (parseFunctional(value)) |functional| return functional;
+        if (!isHexColor(value)) {
             // Try named colors.
-            return find(input) orelse return error.Invalid;
+            return find(value) orelse return error.Invalid;
         }
 
-        const slice = input[1..];
+        const slice = value[1..];
         switch (slice.len) {
             // This means the digit for a color is repeated.
             // Given HEX is #f0c, its interpreted the same as #FF00CC.
@@ -282,17 +282,125 @@ pub const RGBA = packed struct(u32) {
             return writer.writeAll(&buffer);
         }
 
-        // Prefer RGBA format for everything else.
-        return writer.print("rgba({d}, {d}, {d}, {d:.2})", .{ self.r, self.g, self.b, self.normalizedAlpha() });
+        // CSSOM exposes the shortest decimal that maps back to this alpha
+        // byte, rather than simply rounding a/255 to a fixed precision.
+        try writer.print("rgba({d}, {d}, {d}, ", .{ self.r, self.g, self.b });
+        const alpha: u32 = self.a;
+        for ([_]u32{ 1, 10, 100, 1000 }) |scale| {
+            const numerator = (alpha * scale + 127) / 255;
+            if ((numerator * 255 + scale / 2) / scale != alpha) continue;
+            if (scale == 1) {
+                try writer.print("{d})", .{numerator});
+            } else {
+                const places: usize = if (scale == 10) 1 else if (scale == 100) 2 else 3;
+                var digits: [3]u8 = undefined;
+                var remaining = numerator;
+                var i: usize = places;
+                while (i > 0) {
+                    i -= 1;
+                    digits[i] = @as(u8, @intCast(remaining % 10)) + '0';
+                    remaining /= 10;
+                }
+                try writer.writeAll("0.");
+                try writer.writeAll(digits[0..places]);
+                try writer.writeAll(")");
+            }
+            return;
+        }
+        unreachable;
     }
 
     /// Returns true if `Color` is opaque.
     inline fn isOpaque(self: *const RGBA) bool {
         return self.a == std.math.maxInt(u8);
     }
-
-    /// Returns the normalized alpha value.
-    inline fn normalizedAlpha(self: *const RGBA) f32 {
-        return @as(f32, @floatFromInt(self.a)) / 255;
-    }
 };
+
+fn parseFunctional(value: []const u8) ?RGBA {
+    const rgba = std.ascii.startsWithIgnoreCase(value, "rgba(");
+    const rgb = std.ascii.startsWithIgnoreCase(value, "rgb(");
+    if (!rgba and !rgb) return null;
+    if (value.len == 0 or value[value.len - 1] != ')') return null;
+    const inner = std.mem.trim(u8, value[if (rgba) 5 else 4 .. value.len - 1], " \t\n\r");
+    var parts: [4][]const u8 = undefined;
+    var count: usize = 0;
+    if (std.mem.indexOfScalar(u8, inner, ',')) |_| {
+        var it = std.mem.splitScalar(u8, inner, ',');
+        while (it.next()) |part| {
+            if (count == parts.len) return null;
+            parts[count] = std.mem.trim(u8, part, " \t\n\r");
+            count += 1;
+        }
+        if (count != (if (rgba) @as(usize, 4) else 3)) return null;
+    } else {
+        var it = std.mem.tokenizeAny(u8, inner, " \t\n\r/");
+        while (it.next()) |part| {
+            if (count == parts.len) return null;
+            parts[count] = part;
+            count += 1;
+        }
+        if (count != 3 and count != 4) return null;
+        // A four-component modern form requires the alpha slash.
+        if (count == 4 and std.mem.indexOfScalar(u8, inner, '/') == null) return null;
+    }
+    return .{
+        .r = parseChannel(parts[0]) orelse return null,
+        .g = parseChannel(parts[1]) orelse return null,
+        .b = parseChannel(parts[2]) orelse return null,
+        .a = if (count == 4) parseAlpha(parts[3]) orelse return null else 255,
+    };
+}
+
+fn parseChannel(input: []const u8) ?u8 {
+    const percent = std.mem.endsWith(u8, input, "%");
+    const number = std.fmt.parseFloat(f64, if (percent) input[0 .. input.len - 1] else input) catch return null;
+    if (!std.math.isFinite(number)) return null;
+    return @intFromFloat(@round(std.math.clamp(if (percent) number * 255.0 / 100.0 else number, 0.0, 255.0)));
+}
+
+fn parseAlpha(input: []const u8) ?u8 {
+    const percent = std.mem.endsWith(u8, input, "%");
+    const number = std.fmt.parseFloat(f64, if (percent) input[0 .. input.len - 1] else input) catch return null;
+    if (!std.math.isFinite(number)) return null;
+    return @intFromFloat(@round(std.math.clamp(if (percent) number / 100.0 else number, 0.0, 1.0) * 255.0));
+}
+
+test "RGBA: Chrome canvas functional colors and alpha serialization" {
+    const testing = std.testing;
+    const inputs = [_]struct { input: []const u8, expected: []const u8, alpha: u8 }{
+        .{ .input = "rgb(127,64,32)", .expected = "#7f4020", .alpha = 255 },
+        .{ .input = "rgba(127,64,32,0.5)", .expected = "rgba(127, 64, 32, 0.5)", .alpha = 128 },
+        .{ .input = "rgba(127,64,32,0.267)", .expected = "rgba(127, 64, 32, 0.267)", .alpha = 68 },
+        .{ .input = "rgba(127,64,32,0.1)", .expected = "rgba(127, 64, 32, 0.1)", .alpha = 26 },
+        .{ .input = "rgb(50%,25%,12.5%)", .expected = "#804020", .alpha = 255 },
+        .{ .input = "rgb(127 64 32 / 50%)", .expected = "rgba(127, 64, 32, 0.5)", .alpha = 128 },
+        .{ .input = "#11223344", .expected = "rgba(17, 34, 51, 0.267)", .alpha = 68 },
+        .{ .input = "#1234", .expected = "rgba(17, 34, 51, 0.267)", .alpha = 68 },
+    };
+    for (inputs) |case| {
+        const value = try RGBA.parse(case.input);
+        try testing.expectEqual(case.alpha, value.a);
+        var output: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer output.deinit();
+        try value.format(&output.writer);
+        try testing.expectEqualStrings(case.expected, output.written());
+    }
+
+    // Headed Chrome 151: concatenate the exposed fillStyle for every alpha
+    // byte of #000000AA, with ';' separators, and hash the ASCII bytes.
+    var hash: u32 = 2166136261;
+    var length: usize = 0;
+    for (0..256) |alpha| {
+        const value: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = @intCast(alpha) };
+        var output: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer output.deinit();
+        try value.format(&output.writer);
+        for (output.written()) |byte| {
+            hash = (hash ^ byte) *% 16777619;
+        }
+        hash = (hash ^ ';') *% 16777619;
+        length += output.written().len + 1;
+    }
+    try testing.expectEqual(@as(usize, 5251), length);
+    try testing.expectEqual(@as(u32, 0x1704d708), hash);
+}

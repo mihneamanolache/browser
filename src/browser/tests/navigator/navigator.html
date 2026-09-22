@@ -73,6 +73,36 @@
   testing.expectEqual(true, 'refresh' in navigator.plugins);
 </script>
 
+<script id=media_devices type=module>
+  const state = await testing.async();
+  let devices;
+  let failure;
+  try {
+    devices = await navigator.mediaDevices.enumerateDevices();
+  } catch (error) {
+    failure = String(error && error.stack || error);
+  }
+  state.resolve();
+  await state.done(() => {
+    testing.expectEqual(undefined, failure);
+    testing.expectEqual(3, devices.length);
+    testing.expectEqual('audioinput,videoinput,audiooutput', devices.map(x => x.kind).join(','));
+    testing.expectEqual('[object InputDeviceInfo]', Object.prototype.toString.call(devices[0]));
+    testing.expectEqual('[object InputDeviceInfo]', Object.prototype.toString.call(devices[1]));
+    testing.expectEqual('[object MediaDeviceInfo]', Object.prototype.toString.call(devices[2]));
+    testing.expectEqual(true, devices[0] instanceof MediaDeviceInfo);
+    testing.expectEqual(true, devices[0] instanceof InputDeviceInfo);
+    testing.expectEqual('', devices[0].label);
+    testing.expectEqual('', devices[0].deviceId);
+    testing.expectEqual('', devices[0].groupId);
+    testing.expectEqual(
+      '{"deviceId":"","kind":"audioinput","label":"","groupId":""}',
+      JSON.stringify(devices[0]),
+    );
+    testing.expectEqual('object', typeof devices[0].getCapabilities());
+  });
+</script>
+
 <script id=navigator_plugins_iterable>
   // WebIDL: indexed getter => @@iterator (Chrome: [...navigator.plugins] works)
   testing.expectEqual('function', typeof navigator.plugins[Symbol.iterator]);
@@ -132,7 +162,7 @@
 <script id=connection>
   // Chromium-only: its absence is itself a "not Chrome" signal.
   testing.expectEqual('4g', navigator.connection.effectiveType);
-  testing.expectEqual(1.5, navigator.connection.downlink);
+  testing.expectEqual(1.75, navigator.connection.downlink);
   testing.expectEqual(100, navigator.connection.rtt);
   testing.expectEqual(false, navigator.connection.saveData);
 
@@ -172,7 +202,7 @@
 <script id=userAgentData_highEntropy type=module>
   {
     const state = await testing.async();
-    const p = navigator.userAgentData.getHighEntropyValues(['architecture', 'platformVersion', 'fullVersionList']);
+    const p = navigator.userAgentData.getHighEntropyValues(['architecture', 'platformVersion', 'fullVersionList', 'formFactors']);
     testing.expectTrue(p instanceof Promise);
     const v = await p;
     state.resolve();
@@ -195,8 +225,8 @@
       testing.expectEqual('Google Chrome', v.fullVersionList[1].brand);
       testing.expectEqual('151.0.7922.138', v.fullVersionList[1].version);
 
-      testing.expectEqual(true, Array.isArray(v.formFactor));
-      testing.expectEqual('Desktop', v.formFactor[0]);
+      testing.expectEqual(true, Array.isArray(v.formFactors));
+      testing.expectEqual('Desktop', v.formFactors[0]);
     });
   }
 </script>

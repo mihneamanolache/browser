@@ -104,6 +104,7 @@ pub const JsApi = struct {
         pub var class_id: bridge.ClassId = undefined;
     };
 
+    pub const constructor = bridge.constructor(WritableStreamDefaultWriter.init, .{});
     pub const write = bridge.function(WritableStreamDefaultWriter.write, .{});
     pub const close = bridge.function(WritableStreamDefaultWriter.close, .{});
     pub const releaseLock = bridge.function(WritableStreamDefaultWriter.releaseLock, .{});

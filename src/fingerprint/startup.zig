@@ -39,6 +39,7 @@ const Allocator = std.mem.Allocator;
 
 const log = @import("../log.zig");
 const io = @import("../lightpanda.zig").io;
+extern fn lp_host_is_m2pro_baseline() c_int;
 
 /// How long the exit-IP lookup may take before the seeded region is kept. Two
 /// seconds is generous for a single small GET and short enough that a dead
@@ -52,6 +53,13 @@ pub fn apply(allocator: Allocator, config: *const Config) void {
 
     const seed = config.fingerprintSeed() orelse randomSeed();
     fingerprint.select(seed);
+
+    // The normal local build should describe the actual machine that runs
+    // Chrome/ANGLE, not a randomly selected Windows GPU. Keep explicit
+    // machine or seed choices reproducible and authoritative.
+    if (config.fingerprintMachine() == null and config.fingerprintSeed() == null and lp_host_is_m2pro_baseline() != 0) {
+        if (!fingerprint.selectNamed("macbook-pro-14-m2pro", if (config.fingerprintRegion() == null and config.httpProxy() == null) "ro-en-gb" else null)) unreachable;
+    }
 
     // An explicit machine wins over the seed; an explicit region wins over
     // both the seed and the exit IP. Someone who names a value is reproducing

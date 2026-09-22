@@ -27,7 +27,8 @@
 //!               `height` / `min-height` / `max-height`,
 //!               `device-width` / `min-device-width` / `max-device-width`,
 //!               `device-height` / `min-device-height` / `max-device-height`,
-//!               `orientation` (portrait | landscape).
+//!               `orientation` (portrait | landscape), `resolution` (dppx),
+//!               and `display-mode`.
 //!   - Length values: `<int>px`, `<int>em` (1em = 16px), `<int>rem`,
 //!     and bare `0`.
 //!   - Operators: `,` (OR), `and`, `not`, `only`.
@@ -40,6 +41,7 @@
 //! around C10 (inline-only narrow scope, no external CSS fetch).
 
 const std = @import("std");
+const lp = @import("lightpanda");
 
 const Viewport = @import("../Viewport.zig");
 
@@ -274,7 +276,7 @@ fn evalFeature(text: []const u8, viewport: Viewport) bool {
     return evalBoolean(trimmed, viewport);
 }
 
-const max_feature_name_len = 17;
+const max_feature_name_len = 20;
 
 const Feature = struct {
     /// The feature name with any `device-` qualifier removed, so the
@@ -352,6 +354,21 @@ fn evalNameValue(name: []const u8, value: []const u8, outer_viewport: Viewport) 
         if (std.ascii.eqlIgnoreCase(value, "portrait")) return viewport.height > viewport.width;
         return false;
     }
+    if (std.mem.eql(u8, lname, "resolution")) {
+        const dppx = parseResolutionDppx(value) orelse return false;
+        return @abs(lp.fingerprint.devicePixelRatio() - dppx) < 0.000001;
+    }
+    if (std.mem.eql(u8, lname, "display-mode")) {
+        // Lightpanda creates an ordinary top-level browser context. The PWA
+        // display modes require an installed app/fullscreen state that this
+        // context does not enter.
+        return std.ascii.eqlIgnoreCase(value, "browser");
+    }
+    if (std.mem.eql(u8, lname, "prefers-color-scheme")) {
+        if (std.ascii.eqlIgnoreCase(value, "dark")) return lp.fingerprint.prefers_dark_color_scheme;
+        if (std.ascii.eqlIgnoreCase(value, "light")) return !lp.fingerprint.prefers_dark_color_scheme;
+        return false;
+    }
     return false;
 }
 
@@ -367,7 +384,18 @@ fn evalBoolean(name: []const u8, outer_viewport: Viewport) bool {
     if (std.mem.eql(u8, lname, "width")) return viewport.width > 0;
     if (std.mem.eql(u8, lname, "height")) return viewport.height > 0;
     if (std.mem.eql(u8, lname, "orientation")) return true;
+    if (std.mem.eql(u8, lname, "resolution")) return lp.fingerprint.devicePixelRatio() > 0;
+    if (std.mem.eql(u8, lname, "display-mode")) return true;
     return false;
+}
+
+fn parseResolutionDppx(value: []const u8) ?f64 {
+    const trimmed = std.mem.trim(u8, value, &std.ascii.whitespace);
+    const suffix = "dppx";
+    if (trimmed.len <= suffix.len or !std.ascii.endsWithIgnoreCase(trimmed, suffix)) return null;
+    const number = std.mem.trim(u8, trimmed[0 .. trimmed.len - suffix.len], &std.ascii.whitespace);
+    const dppx = std.fmt.parseFloat(f64, number) catch return null;
+    return if (dppx > 0 and std.math.isFinite(dppx)) dppx else null;
 }
 
 /// Parse `<int>px`, `<int>em` (1em=16px), `<int>rem`, or bare `0`.
@@ -509,6 +537,17 @@ test "MediaQuery: orientation" {
     try testing.expect(!matches("(orientation: portrait)", square));
 }
 
+test "MediaQuery: resolution and display mode" {
+    const v = Viewport{ .width = 1200, .height = 730 };
+    try testing.expect(matches("(resolution: 2dppx)", v));
+    try testing.expect(matches("(resolution: 2.0dppx)", v));
+    try testing.expect(!matches("(resolution: 1dppx)", v));
+    try testing.expect(matches("(display-mode: browser)", v));
+    try testing.expect(!matches("(display-mode: fullscreen)", v));
+    try testing.expect(!matches("(display-mode: standalone)", v));
+    try testing.expect(!matches("(display-mode: minimal-ui)", v));
+}
+
 test "MediaQuery: combined with `and`" {
     const v = Viewport.default();
     try testing.expect(matches("screen and (min-width: 600px)", v));
@@ -563,10 +602,16 @@ test "MediaQuery: bare 0 is valid" {
 test "MediaQuery: unknown feature is false" {
     const v = Viewport.default();
     try testing.expect(!matches("(monochrome)", v));
-    try testing.expect(!matches("(prefers-color-scheme: dark)", v));
     try testing.expect(!matches("(prefers-reduced-motion: reduce)", v));
     try testing.expect(!matches("(hover: hover)", v));
     try testing.expect(!matches("(color)", v));
+}
+
+test "MediaQuery: color scheme follows the fingerprint" {
+    const v = Viewport.default();
+    try testing.expect(matches("(prefers-color-scheme: dark)", v));
+    try testing.expect(!matches("(prefers-color-scheme: light)", v));
+    try testing.expect(!matches("(prefers-color-scheme: no-preference)", v));
 }
 
 test "MediaQuery: malformed value is false" {

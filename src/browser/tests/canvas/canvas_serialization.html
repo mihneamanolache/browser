@@ -7,13 +7,6 @@
   <canvas id=c width=64 height=32></canvas>
 </body>
 
-<!--
-  There is no rasterizer: every 2D draw call is a no-op, so a canvas is always
-  blank and serializes to a fixed 1x1 transparent PNG. A real browser would
-  size the image to the canvas, but nothing here can observe image dimensions
-  (Image.naturalWidth is always 0).
--->
-
 <script id=toDataURL_basic>
 {
   const canvas = document.getElementById('c');
@@ -32,15 +25,54 @@
 }
 </script>
 
-<script id=toDataURL_is_size_independent>
+<script id=toDataURL_reflects_ImageData>
 {
-  // Deliberate: with no rasterizer every canvas is blank, so they all
-  // serialize to the same 1x1 transparent PNG regardless of dimensions.
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  const before = canvas.toDataURL();
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(1, 1);
+  image.data.set([255, 0, 0, 255]);
+  ctx.putImageData(image, 0, 0);
+  const after = canvas.toDataURL();
+  testing.expectEqual(false, before === after);
+  testing.expectEqual(after, canvas.toDataURL());
+  testing.expectEqual('255,0,0,255', Array.from(ctx.getImageData(0, 0, 1, 1).data).join(','));
+}
+</script>
+
+<script id=toDataURL_translucent_Chrome_bytes>
+{
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 1;
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(1, 1);
+  image.data.set([127, 64, 32, 128]);
+  ctx.putImageData(image, 0, 0);
+  testing.expectEqual(
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4AWJqcFBoAAAAAP//VCI2UgAAAAZJREFUAwADjwFjgx6ZngAAAABJRU5ErkJggg==',
+    canvas.toDataURL()
+  );
+}
+</script>
+
+<script id=toDataURL_has_canvas_dimensions>
+{
   const a = document.createElement('canvas');
   a.width = 10; a.height = 10;
   const b = document.createElement('canvas');
   b.width = 20; b.height = 20;
-  testing.expectEqual(a.toDataURL(), b.toDataURL());
+  const dimensions = canvas => {
+    const png = atob(canvas.toDataURL().split(',')[1]);
+    const u32 = start => (png.charCodeAt(start) * 0x1000000 +
+      png.charCodeAt(start + 1) * 0x10000 +
+      png.charCodeAt(start + 2) * 0x100 + png.charCodeAt(start + 3));
+    return [u32(16), u32(20)];
+  };
+  testing.expectEqual('10,10', dimensions(a).join(','));
+  testing.expectEqual('20,20', dimensions(b).join(','));
+  testing.expectEqual(false, a.toDataURL() === b.toDataURL());
 }
 </script>
 
@@ -84,7 +116,7 @@
     // A thrown TypeError in here is only logged, so guard before dereferencing.
     testing.expectEqual(true, blob instanceof Blob);
     testing.expectEqual('image/png', blob.type);
-    testing.expectEqual(67, blob.size);
+    testing.expectEqual(atob(canvas.toDataURL().split(',')[1]).length, blob.size);
   });
 }
 </script>

@@ -304,6 +304,10 @@ pub const regions = [_]Region{
     .{ .name = "br", .countries = &.{"BR"}, .timezone = "America/Sao_Paulo", .locale = "pt-BR", .accept_language = "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7", .keyboard = .qwerty },
     .{ .name = "ar", .countries = &.{"AR"}, .timezone = "America/Argentina/Buenos_Aires", .locale = "es-AR", .accept_language = "es-AR,es;q=0.9,en;q=0.8", .keyboard = .qwerty },
     .{ .name = "cl", .countries = &.{"CL"}, .timezone = "America/Santiago", .locale = "es-CL", .accept_language = "es-CL,es;q=0.9,en;q=0.8", .keyboard = .qwerty },
+    .{ .name = "co", .countries = &.{"CO"}, .timezone = "America/Bogota", .locale = "es-CO", .accept_language = "es-CO,es;q=0.9,en;q=0.8", .keyboard = .qwerty },
+    .{ .name = "pe", .countries = &.{"PE"}, .timezone = "America/Lima", .locale = "es-PE", .accept_language = "es-PE,es;q=0.9,en;q=0.8", .keyboard = .qwerty },
+    .{ .name = "ve", .countries = &.{"VE"}, .timezone = "America/Caracas", .locale = "es-VE", .accept_language = "es-VE,es;q=0.9,en;q=0.8", .keyboard = .qwerty },
+    .{ .name = "ec", .countries = &.{"EC"}, .timezone = "America/Guayaquil", .locale = "es-EC", .accept_language = "es-EC,es;q=0.9,en;q=0.8", .keyboard = .qwerty },
 
     .{ .name = "uk", .countries = &.{"GB"}, .timezone = "Europe/London", .locale = "en-GB", .accept_language = "en-GB,en-US;q=0.9,en;q=0.8", .keyboard = .qwerty_uk },
     .{ .name = "ie", .countries = &.{"IE"}, .timezone = "Europe/Dublin", .locale = "en-IE", .accept_language = "en-IE,en-GB;q=0.9,en;q=0.8", .keyboard = .qwerty_uk },
@@ -323,6 +327,9 @@ pub const regions = [_]Region{
     .{ .name = "dk", .countries = &.{"DK"}, .timezone = "Europe/Copenhagen", .locale = "da-DK", .accept_language = "da-DK,da;q=0.9,en-US;q=0.8,en;q=0.7", .keyboard = .qwerty },
     .{ .name = "fi", .countries = &.{"FI"}, .timezone = "Europe/Helsinki", .locale = "fi-FI", .accept_language = "fi-FI,fi;q=0.9,en-US;q=0.8,en;q=0.7", .keyboard = .qwerty },
     .{ .name = "ro", .countries = &.{"RO"}, .timezone = "Europe/Bucharest", .locale = "ro-RO", .accept_language = "ro-RO,ro;q=0.9,en-US;q=0.8,en;q=0.7", .keyboard = .qwerty },
+    // Measured in headed Chrome on the local M2 Pro: English browser UI on a
+    // Romanian network/timezone is normal, and differs from both ro and uk.
+    .{ .name = "ro-en-gb", .countries = &.{"RO"}, .timezone = "Europe/Bucharest", .locale = "en-GB", .accept_language = "en-GB,en-US;q=0.9,en;q=0.8", .keyboard = .qwerty },
     .{ .name = "gr", .countries = &.{"GR"}, .timezone = "Europe/Athens", .locale = "el-GR", .accept_language = "el-GR,el;q=0.9,en;q=0.8", .keyboard = .qwerty },
     .{ .name = "tr", .countries = &.{"TR"}, .timezone = "Europe/Istanbul", .locale = "tr-TR", .accept_language = "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7", .keyboard = .qwerty },
     .{ .name = "ua", .countries = &.{"UA"}, .timezone = "Europe/Kyiv", .locale = "uk-UA", .accept_language = "uk-UA,uk;q=0.9,en;q=0.8", .keyboard = .qwerty },

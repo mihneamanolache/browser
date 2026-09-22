@@ -26,6 +26,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::os::raw::c_void;
+use std::sync::{Mutex, OnceLock};
 
 use fontique::{Blob, Collection, CollectionOptions, GenericFamily, SourceCache};
 use parley::{
@@ -36,7 +37,7 @@ use parley::{
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{GlyphId, MetadataProvider};
-use tiny_skia::{Color, FillRule, IntRect, Paint, PathBuilder, Pixmap, Rect, Transform};
+use tiny_skia::{Color, FillRule, IntRect, Paint, PathBuilder, Pixmap, PixmapMut, Rect, Transform};
 
 // ---------------------------------------------------------------------------
 // C ABI — mirrored by src/browser/screenshot.zig.
@@ -555,6 +556,58 @@ pub unsafe extern "C" fn lp_render_free(r: *mut Renderer) {
     drop(Box::from_raw(r));
 }
 
+/// Whether the host font collection contains `name`.
+///
+/// `FontFace("x", "local(...)")` is an observable font query in Chromium. It
+/// must be backed by the platform font database: resolving every name (or no
+/// name) produces an impossible fingerprint. Fontique uses CoreText,
+/// DirectWrite, or Fontconfig on the respective host, which is also the font
+/// inventory the renderer would have to use once DOM rendering is wired up.
+#[no_mangle]
+pub unsafe extern "C" fn lp_system_font_available(name: *const u8, len: usize) -> bool {
+    static SYSTEM_FONTS: OnceLock<Mutex<Collection>> = OnceLock::new();
+
+    let Ok(name) = std::str::from_utf8(std::slice::from_raw_parts(name, len)) else {
+        return false;
+    };
+    let fonts = SYSTEM_FONTS.get_or_init(|| {
+        Mutex::new(Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: true,
+        }))
+    });
+    let family_available = fonts
+        .lock()
+        .map(|mut collection| collection.family_id(name).is_some())
+        .unwrap_or(false);
+    family_available || platform_font_name_available(name)
+}
+
+#[cfg(target_os = "macos")]
+fn platform_font_name_available(name: &str) -> bool {
+    use objc2_core_foundation::CFString;
+    use objc2_core_text::CTFont;
+
+    let requested = CFString::from_str(name);
+    // CTFont returns a best-match fallback for an unknown name, so existence
+    // is established only if one of the resolved font's names equals the
+    // request. This covers the full-face names accepted by Chromium's
+    // FontFace local() path, not only family names indexed by Fontique.
+    let font = unsafe { CTFont::with_name(&requested, 12.0, std::ptr::null()) };
+    [
+        unsafe { font.full_name() }.to_string(),
+        unsafe { font.family_name() }.to_string(),
+        unsafe { font.post_script_name() }.to_string(),
+    ]
+    .iter()
+    .any(|resolved| resolved.eq_ignore_ascii_case(name))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn platform_font_name_available(_: &str) -> bool {
+    false
+}
+
 /// Renders `blocks` to PNG, streaming the encoded bytes to `write`.
 /// `content_height` receives the full-page height in CSS px, and is filled in
 /// even when rendering fails. Returns one of the RC_* codes above. The
@@ -582,6 +635,138 @@ pub unsafe extern "C" fn lp_render_png(
         )
     }));
     caught.unwrap_or(RC_PANIC)
+}
+
+/// Paint a rectangle into a premultiplied-RGBA canvas bitmap. This is the
+/// software 2D path used when the page requests willReadFrequently.
+#[no_mangle]
+pub unsafe extern "C" fn lp_canvas_rect(
+    pixels: *mut u8,
+    pixels_len: usize,
+    canvas_width: u32,
+    canvas_height: u32,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    red: u8,
+    green: u8,
+    blue: u8,
+    alpha: u8,
+) -> i32 {
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if pixels.is_null() || ![x, y, width, height].iter().all(|v| v.is_finite()) {
+            return 1;
+        }
+        let bytes = std::slice::from_raw_parts_mut(pixels, pixels_len);
+        let Some(mut pixmap) = PixmapMut::from_bytes(bytes, canvas_width, canvas_height) else {
+            return 1;
+        };
+        let Some(rect) = Rect::from_xywh(x, y, width, height) else {
+            return 1;
+        };
+        let mut paint = Paint::default();
+        paint.anti_alias = true;
+        paint.set_color_rgba8(red, green, blue, alpha);
+        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        0
+    }));
+    caught.unwrap_or(RC_PANIC)
+}
+
+/// Encode a straight-RGBA canvas bitmap without involving the text-page
+/// renderer. The caller owns the pixels and receives PNG chunks through the
+/// same callback ABI as `lp_render_png`.
+#[no_mangle]
+pub unsafe extern "C" fn lp_canvas_png(
+    width: u32,
+    height: u32,
+    pixels: *const u8,
+    pixels_len: usize,
+    ctx: *mut c_void,
+    write: LpWriteFn,
+) -> i32 {
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(expected) = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4))
+        else {
+            return RC_INVALID;
+        };
+        if width == 0 || height == 0 || pixels.is_null() || pixels_len != expected {
+            return RC_INVALID;
+        }
+        let data = std::slice::from_raw_parts(pixels, pixels_len);
+        let sink = Sink {
+            ctx,
+            write,
+            failed: false,
+        };
+        let mut encoder = png::Encoder::new(sink, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        // Blink 151 calls SkPngRustEncoder::CompressionLevel::kLow for canvas
+        // serialization. At the pinned Skia revision that maps to the same
+        // png 0.18.1 crate, zlib level 1 and the Up row filter.
+        encoder.set_deflate_compression(png::DeflateCompression::Level(1));
+        encoder.set_filter(png::Filter::Up);
+        let encoded = (|| -> Result<(), png::EncodingError> {
+            // Skia converts Writer to StreamWriter and writes one pixmap row
+            // at a time. `write_image_data` emits a different IDAT stream even
+            // with identical pixels and compression settings.
+            let mut writer = encoder.write_header()?.into_stream_writer()?;
+            let stride = width as usize * 4;
+            for row in data.chunks_exact(stride) {
+                std::io::Write::write_all(&mut writer, row).map_err(png::EncodingError::IoError)?;
+            }
+            writer.finish()
+        })();
+        match encoded {
+            Ok(()) => RC_OK,
+            Err(png::EncodingError::IoError(_)) => RC_WRITE_REFUSED,
+            Err(_) => RC_ENCODE_FAILED,
+        }
+    }));
+    caught.unwrap_or(RC_PANIC)
+}
+
+/// Decode a PNG's first frame before exposing its intrinsic dimensions. This
+/// is the portable fallback when the host has no platform image decoder.
+#[no_mangle]
+pub unsafe extern "C" fn lp_png_decode_info(
+    data: *const u8,
+    len: usize,
+    width: *mut u32,
+    height: *mut u32,
+) -> bool {
+    std::panic::catch_unwind(|| {
+        if data.is_null() || width.is_null() || height.is_null() || len < 8 {
+            return false;
+        }
+        let bytes = std::slice::from_raw_parts(data, len);
+        if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+            return false;
+        }
+        let Some((w, h)) = (|| {
+            let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
+                .read_info()
+                .ok()?;
+            let (w, h) = (reader.info().width, reader.info().height);
+            let size = reader.output_buffer_size()?;
+            if size > 64 * 1024 * 1024 {
+                return None;
+            }
+            let mut pixels = vec![0; size];
+            reader.next_frame(&mut pixels).ok()?;
+            Some((w, h))
+        })() else {
+            return false;
+        };
+        *width = w;
+        *height = h;
+        true
+    })
+    .unwrap_or(false)
 }
 
 unsafe fn render_png(

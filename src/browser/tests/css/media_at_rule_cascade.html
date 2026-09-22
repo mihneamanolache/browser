@@ -45,9 +45,9 @@
       #hidden-by-nested { display: none; }
     }
   }
-  /* Unsupported feature → query doesn't match → element stays visible. */
+  /* The selected fingerprint uses dark appearance → query matches. */
   @media (prefers-color-scheme: dark) {
-    #not-hidden-unsupported { display: none; }
+    #hidden-by-dark-scheme { display: none; }
   }
   /* visibility:hidden inside @media. */
   @media (min-width: 1px) {
@@ -99,7 +99,7 @@
   <div id="hidden-by-not">not-hit</div>
   <div id="hidden-by-screen">screen-hit</div>
   <div id="hidden-by-nested">nested-hit</div>
-  <div id="not-hidden-unsupported">unsupported</div>
+  <div id="hidden-by-dark-scheme">dark-scheme</div>
   <div id="visibility-hidden-cascade">visibility</div>
   <div id="commented-prelude">commented-prelude</div>
   <div id="commented-query">commented-query</div>
@@ -157,9 +157,9 @@
 }
 </script>
 
-<script id=cascade_unsupported_feature_is_false>
+<script id=cascade_color_scheme_matches_fingerprint>
 {
-  testing.expectTrue($('#not-hidden-unsupported').checkVisibility());
+  testing.expectFalse($('#hidden-by-dark-scheme').checkVisibility());
 }
 </script>
 

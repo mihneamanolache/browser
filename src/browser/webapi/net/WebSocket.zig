@@ -136,7 +136,8 @@ const BinaryType = enum {
     arraybuffer,
 };
 
-pub fn init(url: []const u8, protocols: [][]const u8, exec: *const Execution) !*WebSocket {
+pub fn init(url: []const u8, protocols_: ?[][]const u8, exec: *const Execution) !*WebSocket {
+    const protocols = protocols_ orelse &.{};
     {
         if (std.mem.indexOfScalar(u8, url, '#') != null) {
             // Fragments are not allowed in WebSocket URLs.
@@ -213,7 +214,7 @@ pub fn init(url: []const u8, protocols: [][]const u8, exec: *const Execution) !*
     return self;
 }
 
-fn connect(self: *WebSocket, protocols: [][]const u8) !void {
+fn connect(self: *WebSocket, protocols: []const []const u8) !void {
     const exec = self._exec;
     const arena = self._arena;
     const resolved_url = self._url;

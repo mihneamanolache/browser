@@ -4,13 +4,8 @@
 
 <!--
   These run with load_resources = .{ .image = true } (see Image.zig's test
-  decl). Every route here has a real body, so a `load` event is only
-  reachable if the transfer really did stop after the headers and still
-  complete successfully — that's what makes these a test of the fetch path
-  and not just of the event plumbing.
-
-  /images/ok.png is over the headers-only drain threshold (abort branch),
-  /images/small.png is under it (drain branch).
+  decl). PNG routes return actual decodable image bytes; a 200 with malformed
+  image bytes must not fire load on macOS.
 -->
 
 <script id="img-200-fires-load" type=module>
@@ -26,6 +21,25 @@
   state.resolve();
   await state.done(() => {
     testing.expectEqual("load", evt);
+    testing.expectEqual(1, img.naturalWidth);
+    testing.expectEqual(1, img.naturalHeight);
+    testing.expectEqual(1, img.width);
+    testing.expectEqual(1, img.height);
+  });
+</script>
+
+<script id="img-200-malformed-fires-error" type=module>
+  const state = await testing.async();
+  const img = document.createElement("img");
+  const evt = await new Promise(resolve => {
+    img.addEventListener("load", () => resolve("load"));
+    img.addEventListener("error", () => resolve("error"));
+    img.src = "/images/bad.png";
+  });
+  state.resolve();
+  await state.done(() => {
+    testing.expectEqual("error", evt);
+    testing.expectEqual(0, img.naturalWidth);
   });
 </script>
 
@@ -44,13 +58,65 @@
   state.resolve();
   await state.done(() => {
     testing.expectEqual("error", evt);
+    // An unattached broken image has no rendered replacement box.
+    testing.expectEqual(0, img.width);
+    testing.expectEqual(0, img.height);
+    testing.expectEqual(0, img.naturalWidth);
+    testing.expectEqual(0, img.naturalHeight);
+    document.body.appendChild(img);
+    testing.expectEqual(16, img.width);
+    testing.expectEqual(16, img.height);
   });
 </script>
 
-<script id="img-small-body-drains-and-loads" type=module>
-  // Under the drain threshold: the body is read and discarded rather than
-  // aborted, so the connection stays poolable. Observably identical to the
-  // abort branch above.
+<script id="img-decode-resolves-after-image-load" type=module>
+  const state = await testing.async();
+  const img = new Image();
+  img.src = "/images/ok.png";
+  const pending = img.decode();
+  const before = img.complete;
+  const result = await pending.then(() => "resolved", e => e.name);
+  state.resolve();
+  await state.done(() => {
+    testing.expectEqual(false, before);
+    testing.expectEqual("resolved", result);
+    testing.expectEqual(1, img.naturalWidth);
+  });
+</script>
+
+<script id="img-decode-rejects-malformed-and-empty" type=module>
+  const state = await testing.async();
+  const empty = new Image();
+  const emptyResult = await empty.decode().then(() => "resolved", e => e.name + ":" + e.message);
+  const bad = new Image();
+  bad.src = "/images/bad.png";
+  const badResult = await bad.decode().then(() => "resolved", e => e.name + ":" + e.message);
+  state.resolve();
+  await state.done(() => {
+    testing.expectEqual("EncodingError:The source image cannot be decoded.", emptyResult);
+    testing.expectEqual("EncodingError:The source image cannot be decoded.", badResult);
+  });
+</script>
+
+<script id="img-broken-explicit-dimensions-win" type=module>
+  const state = await testing.async();
+  const img = document.createElement("img");
+  img.width = 31;
+  img.height = 29;
+
+  await new Promise(resolve => {
+    img.addEventListener("error", resolve);
+    img.src = "/images/404.png";
+  });
+
+  state.resolve();
+  await state.done(() => {
+    testing.expectEqual(31, img.width);
+    testing.expectEqual(29, img.height);
+  });
+</script>
+
+<script id="img-small-body-decodes-and-loads" type=module>
   const state = await testing.async();
   const img = document.createElement("img");
 
@@ -63,8 +129,7 @@
   state.resolve();
   await state.done(() => {
     testing.expectEqual("load", evt);
-    // Drained, not decoded: still no dimensions.
-    testing.expectEqual(0, img.naturalWidth);
+    testing.expectEqual(1, img.naturalWidth);
   });
 </script>
 
@@ -89,8 +154,7 @@
 </script>
 
 <script id="img-chunked-body-loads" type=module>
-  // No Content-Length, so the drain/abort decision can't be made up front.
-  // Small enough to drain; either way it must report the real status.
+  // An SVG response without Content-Length still fires load.
   const state = await testing.async();
   const img = document.createElement("img");
 
@@ -141,8 +205,8 @@
 </script>
 
 <script id="img-complete-tracks-the-fetch" type=module>
-  // complete is false only while a request is in flight. naturalWidth stays
-  // 0 either way: we fetch images, we don't decode them.
+  // complete is false while a request is in flight; dimensions become
+  // available after successful decoding.
   const state = await testing.async();
   const img = document.createElement("img");
 
@@ -160,8 +224,8 @@
   await state.done(() => {
     testing.expectEqual(false, during);
     testing.expectEqual(true, after);
-    testing.expectEqual(0, img.naturalWidth);
-    testing.expectEqual(0, img.naturalHeight);
+    testing.expectEqual(1, img.naturalWidth);
+    testing.expectEqual(1, img.naturalHeight);
   });
 </script>
 

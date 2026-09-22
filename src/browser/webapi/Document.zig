@@ -24,6 +24,7 @@ const public_suffix_list = @import("../../data/public_suffix_list.zig");
 
 const URL = @import("../URL.zig");
 const js = @import("../js/js.zig");
+const Execution = js.Execution;
 const Page = @import("../Page.zig");
 const Frame = @import("../Frame.zig");
 const Parser = @import("../parser/Parser.zig");
@@ -37,6 +38,7 @@ const Selector = @import("selector/Selector.zig");
 const DOMTreeWalker = @import("DOMTreeWalker.zig");
 const DOMNodeIterator = @import("DOMNodeIterator.zig");
 const DOMImplementation = @import("DOMImplementation.zig");
+const FeaturePolicy = @import("FeaturePolicy.zig");
 const StyleSheetList = @import("css/StyleSheetList.zig");
 const FontFaceSet = @import("css/FontFaceSet.zig");
 const Selection = @import("Selection.zig");
@@ -75,6 +77,7 @@ _removed_ids: std.StringHashMapUnmanaged(void) = .empty,
 _active_element: ?*Element = null,
 _style_sheets: ?*StyleSheetList = null,
 _implementation: ?*DOMImplementation = null,
+_feature_policy: ?*FeaturePolicy = null,
 _fonts: ?*FontFaceSet = null,
 _write_insertion_point: ?*Node = null,
 _script_created_parser: ?Parser.Streaming = null,
@@ -513,6 +516,14 @@ fn getImplementation(self: *Document, frame: *Frame) !*DOMImplementation {
     return impl;
 }
 
+fn getFeaturePolicy(self: *Document, frame: *Frame) !*FeaturePolicy {
+    if (self._feature_policy) |policy| return policy;
+    const origin = if (self._frame) |document_frame| document_frame.origin else null;
+    const policy = try frame._factory.create(FeaturePolicy{ ._origin = origin });
+    self._feature_policy = policy;
+    return policy;
+}
+
 fn createDocumentFragment(self: *Document, frame: *Frame) !*Node.DocumentFragment {
     return Node.DocumentFragment.init(self, frame);
 }
@@ -626,11 +637,6 @@ fn createEvent(_: *const Document, event_type: []const u8, frame: *Frame) !*@imp
         if (std.mem.eql(u8, normalized, "storageevent")) {
             const StorageEvent = @import("event/StorageEvent.zig");
             break :blk (try StorageEvent.init("", null, frame)).asEvent();
-        }
-
-        if (std.mem.eql(u8, normalized, "touchevent")) {
-            const TouchEvent = @import("event/TouchEvent.zig");
-            break :blk (try TouchEvent.init("", null, frame)).asEvent();
         }
 
         return error.NotSupported;
@@ -1255,6 +1261,28 @@ pub fn hasFocus(_: *Document) bool {
     return true;
 }
 
+// Storage Access API. reCAPTCHA reads document.hasStorageAccess inside its
+// anchor frame, and Chrome 151 carries all three of these on
+// Document.prototype. Measured there with a throwaway profile on a
+// top-level document: hasStorageAccess() resolves true, the arities are
+// 0/0/1, and each is an enumerable, configurable, writable data property.
+//
+// A top-level same-origin document always has unpartitioned cookie access,
+// which is the only case this browser ever runs in, so `true` is the honest
+// answer rather than a stub. Third-party partitioned contexts would need
+// real storage partitioning before this could vary.
+pub fn hasStorageAccess(_: *Document, exec: *const Execution) !js.Promise {
+    return exec.js.local.?.resolvePromise(true);
+}
+
+pub fn requestStorageAccess(_: *Document, exec: *const Execution) !js.Promise {
+    return exec.js.local.?.resolvePromise({});
+}
+
+pub fn requestStorageAccessFor(_: *Document, _: []const u8, exec: *const Execution) !js.Promise {
+    return exec.js.local.?.resolvePromise({});
+}
+
 fn setAdoptedStyleSheets(self: *Document, sheets: js.Object) !void {
     self._adopted_style_sheets = try sheets.persist();
 }
@@ -1530,6 +1558,7 @@ pub const JsApi = struct {
     pub const children = bridge.accessor(Document.getChildren, null, .{});
     pub const readyState = bridge.accessor(Document.getReadyState, null, .{});
     pub const implementation = bridge.accessor(Document.getImplementation, null, .{});
+    pub const featurePolicy = bridge.accessor(Document.getFeaturePolicy, null, .{});
     pub const activeElement = bridge.accessor(Document.getActiveElement, null, .{});
     pub const styleSheets = bridge.accessor(Document.getStyleSheets, null, .{});
     pub const fonts = bridge.accessor(Document.getFonts, null, .{});
@@ -1537,7 +1566,7 @@ pub const JsApi = struct {
     pub const domain = bridge.accessor(Document.getDomain, Document.setDomain, .{});
     pub const cookie = bridge.accessor(Document.getCookie, Document.setCookie, .{});
     pub const createElement = bridge.function(Document.createElement, .{});
-    pub const createElementNS = bridge.function(Document.createElementNS, .{});
+    pub const createElementNS = bridge.function(Document.createElementNS, .{ .arity = 2 });
     pub const createDocumentFragment = bridge.function(Document.createDocumentFragment, .{});
     pub const createComment = bridge.function(Document.createComment, .{});
     pub const createTextNode = bridge.function(Document.createTextNode, .{});
@@ -1549,10 +1578,10 @@ pub const JsApi = struct {
     pub const createEvent = bridge.function(Document.createEvent, .{});
     pub const createTreeWalker = bridge.function(Document.createTreeWalker, .{});
     pub const createNodeIterator = bridge.function(Document.createNodeIterator, .{});
-    pub const evaluate = bridge.function(Document.evaluate, .{});
+    pub const evaluate = bridge.function(Document.evaluate, .{ .arity = 2 });
     pub const createExpression = bridge.function(Document.createExpression, .{});
     pub const createNSResolver = bridge.function(Document.createNSResolver, .{});
-    pub const getElementById = bridge.function(_getElementById, .{});
+    pub const getElementById = bridge.function(_getElementById, .{ .arity = 1 });
     fn _getElementById(self: *Document, value_: ?js.Value, frame: *Frame) !?*Element {
         const value = value_ orelse return null;
         if (value.isNull()) {
@@ -1566,20 +1595,20 @@ pub const JsApi = struct {
     pub const querySelector = bridge.function(Document.querySelector, .{});
     pub const querySelectorAll = bridge.function(Document.querySelectorAll, .{});
     pub const getElementsByTagName = bridge.function(Document.getElementsByTagName, .{});
-    pub const getElementsByTagNameNS = bridge.function(Document.getElementsByTagNameNS, .{});
+    pub const getElementsByTagNameNS = bridge.function(Document.getElementsByTagNameNS, .{ .arity = 2 });
     pub const getSelection = bridge.function(Document.getSelection, .{});
     pub const getElementsByClassName = bridge.function(Document.getElementsByClassName, .{});
     pub const getElementsByName = bridge.function(Document.getElementsByName, .{});
     pub const adoptNode = bridge.function(Document.adoptNode, .{ .ce_reactions = true });
     pub const importNode = bridge.function(Document.importNode, .{ .ce_reactions = true });
-    pub const append = bridge.function(Document.append, .{ .ce_reactions = true });
-    pub const prepend = bridge.function(Document.prepend, .{ .ce_reactions = true });
+    pub const append = bridge.function(Document.append, .{ .ce_reactions = true, .arity = 0 });
+    pub const prepend = bridge.function(Document.prepend, .{ .ce_reactions = true, .arity = 0 });
     pub const moveBefore = bridge.function(Document.moveBefore, .{ .ce_reactions = true });
-    pub const replaceChildren = bridge.function(Document.replaceChildren, .{ .ce_reactions = true });
+    pub const replaceChildren = bridge.function(Document.replaceChildren, .{ .ce_reactions = true, .arity = 0 });
     pub const elementFromPoint = bridge.function(Document.elementFromPoint, .{});
     pub const elementsFromPoint = bridge.function(Document.elementsFromPoint, .{});
-    pub const write = bridge.function(Document.write, .{ .ce_reactions = true });
-    pub const writeln = bridge.function(Document.writeln, .{ .ce_reactions = true });
+    pub const write = bridge.function(Document.write, .{ .ce_reactions = true, .arity = 0 });
+    pub const writeln = bridge.function(Document.writeln, .{ .ce_reactions = true, .arity = 0 });
     pub const open = bridge.function(Document.open, .{ .ce_reactions = true });
     pub const close = bridge.function(Document.close, .{ .ce_reactions = true });
     pub const doctype = bridge.accessor(Document.getDocType, null, .{});
@@ -1596,6 +1625,9 @@ pub const JsApi = struct {
         }
     }.defaultView, null, .{});
     pub const hasFocus = bridge.function(Document.hasFocus, .{});
+    pub const hasStorageAccess = bridge.function(Document.hasStorageAccess, .{});
+    pub const requestStorageAccess = bridge.function(Document.requestStorageAccess, .{});
+    pub const requestStorageAccessFor = bridge.function(Document.requestStorageAccessFor, .{});
 
     pub const prerendering = bridge.property(false, .{ .template = false });
     pub const characterSet = bridge.accessor(Document.getCharset, null, .{});

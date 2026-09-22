@@ -26,6 +26,7 @@ const context2d = @import("context2d.zig");
 const TextMetrics = @import("TextMetrics.zig");
 const CanvasGradient = @import("CanvasGradient.zig");
 const CanvasPattern = @import("CanvasPattern.zig");
+const Bitmap = @import("Bitmap.zig");
 
 const Execution = js.Execution;
 
@@ -37,6 +38,14 @@ const CanvasRenderingContext2D = @This();
 /// https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/canvas
 _canvas: *Canvas,
 _state: context2d.State = .{},
+_state_stack: std.ArrayList(context2d.State) = .empty,
+_bitmap: Bitmap = .{},
+_software_raster: bool = false,
+_context_options: context2d.ContextOptions = .{},
+
+fn getContextAttributes(self: *const CanvasRenderingContext2D) context2d.ContextAttributes {
+    return .fromOptions(self._context_options);
+}
 
 fn getCanvas(self: *const CanvasRenderingContext2D) *Canvas {
     return self._canvas;
@@ -83,24 +92,38 @@ fn createImageData(
     }
 }
 
-fn putImageData(_: *const CanvasRenderingContext2D, _: *ImageData, _: f64, _: f64, _: ?f64, _: ?f64, _: ?f64, _: ?f64) void {}
+fn putImageData(self: *CanvasRenderingContext2D, image: *ImageData, dx: f64, dy: f64, dirty_x: ?f64, dirty_y: ?f64, dirty_width: ?f64, dirty_height: ?f64, exec: *Execution) !void {
+    if (!std.math.isFinite(dx) or !std.math.isFinite(dy)) return;
+    const x = std.math.lossyCast(i32, @trunc(dx));
+    const y = std.math.lossyCast(i32, @trunc(dy));
+    try self._bitmap.ensure(self._canvas.getWidth(), self._canvas.getHeight(), exec.arena);
+    const data = image._data.local(exec.js.local.?).slice();
+    try self._bitmap.write(data, image._width, image._height, x, y, std.math.lossyCast(i32, @trunc(dirty_x orelse 0)), std.math.lossyCast(i32, @trunc(dirty_y orelse 0)), if (dirty_width) |v| std.math.lossyCast(i32, @trunc(v)) else std.math.lossyCast(i32, image._width), if (dirty_height) |v| std.math.lossyCast(i32, @trunc(v)) else std.math.lossyCast(i32, image._height), exec.arena);
+}
 
 // CanvasImageSource (HTMLImageElement, HTMLCanvasElement, ImageBitmap, ...) is
 // just taken as a js.Value for now since we don't use it, and that's much easier.
 fn drawImage(_: *const CanvasRenderingContext2D, _: js.Value, _: f64, _: f64, _: ?f64, _: ?f64, _: ?f64, _: ?f64, _: ?f64, _: ?f64) void {}
 
 fn getImageData(
-    _: *const CanvasRenderingContext2D,
-    _: i32, // sx
-    _: i32, // sy
+    self: *CanvasRenderingContext2D,
+    sx: i32,
+    sy: i32,
     sw: i32,
     sh: i32,
     exec: *Execution,
 ) !*ImageData {
-    if (sw <= 0 or sh <= 0) {
+    if (sw == 0 or sh == 0) {
         return error.IndexSizeError;
     }
-    return ImageData.init(@intCast(sw), @intCast(sh), null, exec);
+    const read_width: u32 = @intCast(@abs(@as(i64, sw)));
+    const read_height: u32 = @intCast(@abs(@as(i64, sh)));
+    const read_x: i64 = @as(i64, sx) + @min(@as(i64, sw), 0);
+    const read_y: i64 = @as(i64, sy) + @min(@as(i64, sh), 0);
+    try self._bitmap.ensure(self._canvas.getWidth(), self._canvas.getHeight(), exec.arena);
+    const image = try ImageData.init(read_width, read_height, null, exec);
+    self._bitmap.read(read_x, read_y, read_width, read_height, image._data.local(exec.js.local.?).slice());
+    return image;
 }
 
 fn getFont(self: *const CanvasRenderingContext2D) []const u8 {
@@ -153,16 +176,37 @@ fn createPattern(_: *const CanvasRenderingContext2D, _: js.Value, repetition_: ?
     return error.SyntaxError;
 }
 
-pub fn save(_: *CanvasRenderingContext2D) void {}
-pub fn restore(_: *CanvasRenderingContext2D) void {}
+pub fn save(self: *CanvasRenderingContext2D, exec: *Execution) !void {
+    try self._state_stack.append(exec.arena, self._state);
+}
+pub fn restore(self: *CanvasRenderingContext2D) void {
+    self._state = self._state_stack.pop() orelse return;
+}
 pub fn scale(_: *CanvasRenderingContext2D, _: f64, _: f64) void {}
 pub fn rotate(_: *CanvasRenderingContext2D, _: f64) void {}
 pub fn translate(_: *CanvasRenderingContext2D, _: f64, _: f64) void {}
 pub fn transform(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64, _: f64, _: f64) void {}
 fn setTransform(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64, _: f64, _: f64) void {}
 fn resetTransform(_: *CanvasRenderingContext2D) void {}
-fn clearRect(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64) void {}
-fn fillRect(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64) void {}
+fn getGlobalAlpha(self: *const CanvasRenderingContext2D) f64 {
+    return self._state.global_alpha;
+}
+fn setGlobalAlpha(self: *CanvasRenderingContext2D, value: f64) void {
+    if (std.math.isFinite(value) and value >= 0 and value <= 1) self._state.global_alpha = value;
+}
+fn clearRect(self: *CanvasRenderingContext2D, x: f64, y: f64, width: f64, height: f64, exec: *Execution) !void {
+    try self._bitmap.ensure(self._canvas.getWidth(), self._canvas.getHeight(), exec.arena);
+    self._bitmap.rect(x, y, width, height, null, self._software_raster);
+}
+fn fillRect(self: *CanvasRenderingContext2D, x: f64, y: f64, width: f64, height: f64, exec: *Execution) !void {
+    var fill_color = switch (self._state.fill_style) {
+        .color => |c| c,
+        else => return,
+    };
+    fill_color.a = @intFromFloat(@round(@as(f64, @floatFromInt(fill_color.a)) * self._state.global_alpha));
+    try self._bitmap.ensure(self._canvas.getWidth(), self._canvas.getHeight(), exec.arena);
+    self._bitmap.rect(x, y, width, height, fill_color, self._software_raster);
+}
 fn strokeRect(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64) void {}
 fn beginPath(_: *CanvasRenderingContext2D) void {}
 fn closePath(_: *CanvasRenderingContext2D) void {}
@@ -176,7 +220,15 @@ pub fn rect(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64) void {
 pub fn fill(_: *CanvasRenderingContext2D) void {}
 pub fn stroke(_: *CanvasRenderingContext2D) void {}
 pub fn clip(_: *CanvasRenderingContext2D) void {}
-fn fillText(_: *CanvasRenderingContext2D, _: []const u8, _: f64, _: f64, _: ?f64) void {}
+fn fillText(self: *CanvasRenderingContext2D, text: []const u8, x: f64, y: f64, max_width: ?f64, exec: *Execution) !void {
+    var fill_color = switch (self._state.fill_style) {
+        .color => |c| c,
+        else => return,
+    };
+    fill_color.a = @intFromFloat(@round(@as(f64, @floatFromInt(fill_color.a)) * self._state.global_alpha));
+    try self._bitmap.ensure(self._canvas.getWidth(), self._canvas.getHeight(), exec.arena);
+    _ = self._bitmap.fillText(text, context2d.nativeFont(self._state.font()), self._state.font_size, x, y, max_width, fill_color);
+}
 fn strokeText(_: *CanvasRenderingContext2D, _: []const u8, _: f64, _: f64, _: ?f64) void {}
 
 pub const JsApi = struct {
@@ -190,6 +242,7 @@ pub const JsApi = struct {
     };
 
     pub const canvas = bridge.accessor(CanvasRenderingContext2D.getCanvas, null, .{});
+    pub const getContextAttributes = bridge.function(CanvasRenderingContext2D.getContextAttributes, .{});
     pub const font = bridge.accessor(CanvasRenderingContext2D.getFont, CanvasRenderingContext2D.setFont, .{});
     pub const measureText = bridge.function(CanvasRenderingContext2D.measureText, .{});
     pub const setLineDash = bridge.function(CanvasRenderingContext2D.setLineDash, .{});
@@ -214,7 +267,7 @@ pub const JsApi = struct {
     pub const letterSpacing = bridge.property("0px", .{ .template = false, .readonly = false });
     pub const wordSpacing = bridge.property("0px", .{ .template = false, .readonly = false });
     pub const fontKerning = bridge.property("auto", .{ .template = false, .readonly = false });
-    pub const globalAlpha = bridge.property(1.0, .{ .template = false, .readonly = false });
+    pub const globalAlpha = bridge.accessor(CanvasRenderingContext2D.getGlobalAlpha, CanvasRenderingContext2D.setGlobalAlpha, .{});
     pub const globalCompositeOperation = bridge.property("source-over", .{ .template = false, .readonly = false });
     pub const strokeStyle = bridge.accessor(CanvasRenderingContext2D.getStrokeStyle, CanvasRenderingContext2D.setStrokeStyle, .{});
     pub const lineWidth = bridge.property(1.0, .{ .template = false, .readonly = false });
@@ -227,19 +280,19 @@ pub const JsApi = struct {
     pub const fillStyle = bridge.accessor(CanvasRenderingContext2D.getFillStyle, CanvasRenderingContext2D.setFillStyle, .{});
     pub const createImageData = bridge.function(CanvasRenderingContext2D.createImageData, .{});
 
-    pub const putImageData = bridge.function(CanvasRenderingContext2D.putImageData, .{ .noop = true });
+    pub const putImageData = bridge.function(CanvasRenderingContext2D.putImageData, .{});
     pub const drawImage = bridge.function(CanvasRenderingContext2D.drawImage, .{ .noop = true });
     pub const getImageData = bridge.function(CanvasRenderingContext2D.getImageData, .{});
-    pub const save = bridge.function(CanvasRenderingContext2D.save, .{ .noop = true });
-    pub const restore = bridge.function(CanvasRenderingContext2D.restore, .{ .noop = true });
+    pub const save = bridge.function(CanvasRenderingContext2D.save, .{});
+    pub const restore = bridge.function(CanvasRenderingContext2D.restore, .{});
     pub const scale = bridge.function(CanvasRenderingContext2D.scale, .{ .noop = true });
     pub const rotate = bridge.function(CanvasRenderingContext2D.rotate, .{ .noop = true });
     pub const translate = bridge.function(CanvasRenderingContext2D.translate, .{ .noop = true });
     pub const transform = bridge.function(CanvasRenderingContext2D.transform, .{ .noop = true });
     pub const setTransform = bridge.function(CanvasRenderingContext2D.setTransform, .{ .noop = true });
     pub const resetTransform = bridge.function(CanvasRenderingContext2D.resetTransform, .{ .noop = true });
-    pub const clearRect = bridge.function(CanvasRenderingContext2D.clearRect, .{ .noop = true });
-    pub const fillRect = bridge.function(CanvasRenderingContext2D.fillRect, .{ .noop = true });
+    pub const clearRect = bridge.function(CanvasRenderingContext2D.clearRect, .{});
+    pub const fillRect = bridge.function(CanvasRenderingContext2D.fillRect, .{});
     pub const strokeRect = bridge.function(CanvasRenderingContext2D.strokeRect, .{ .noop = true });
     pub const beginPath = bridge.function(CanvasRenderingContext2D.beginPath, .{ .noop = true });
     pub const closePath = bridge.function(CanvasRenderingContext2D.closePath, .{ .noop = true });
@@ -253,7 +306,7 @@ pub const JsApi = struct {
     pub const fill = bridge.function(CanvasRenderingContext2D.fill, .{ .noop = true });
     pub const stroke = bridge.function(CanvasRenderingContext2D.stroke, .{ .noop = true });
     pub const clip = bridge.function(CanvasRenderingContext2D.clip, .{ .noop = true });
-    pub const fillText = bridge.function(CanvasRenderingContext2D.fillText, .{ .noop = true });
+    pub const fillText = bridge.function(CanvasRenderingContext2D.fillText, .{});
     pub const strokeText = bridge.function(CanvasRenderingContext2D.strokeText, .{ .noop = true });
 };
 
