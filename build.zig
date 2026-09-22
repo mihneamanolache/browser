@@ -858,12 +858,32 @@ fn buildNghttp3(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.O
     const patched_nghttp3 = chrome_patch.addOutputDirectoryArg("nghttp3-chrome-patched");
     mod.addCSourceFiles(.{
         .root = patched_nghttp3,
-        .flags = &.{ "-DBUILDING_NGHTTP3", "-DHAVE_UNISTD_H=1" },
+        .flags = &.{
+            "-DBUILDING_NGHTTP3",
+            "-DHAVE_UNISTD_H=1",
+            // ntohl/ntohs/htonl/htons live in <arpa/inet.h>. macOS pulls
+            // them in transitively, glibc does not, so without these
+            // nghttp3_conv.c and nghttp3_qpack_huffman.c fail to compile on
+            // Linux with "call to undeclared function". nghttp2 and ngtcp2
+            // already pass both.
+            "-DHAVE_ARPA_INET_H",
+            "-DHAVE_NETINET_IN_H",
+        },
         .files = &.{"nghttp3_stream.c"},
     });
     mod.addCSourceFiles(.{
         .root = dep.path("lib"),
-        .flags = &.{ "-DBUILDING_NGHTTP3", "-DHAVE_UNISTD_H=1" },
+        .flags = &.{
+            "-DBUILDING_NGHTTP3",
+            "-DHAVE_UNISTD_H=1",
+            // ntohl/ntohs/htonl/htons live in <arpa/inet.h>. macOS pulls
+            // them in transitively, glibc does not, so without these
+            // nghttp3_conv.c and nghttp3_qpack_huffman.c fail to compile on
+            // Linux with "call to undeclared function". nghttp2 and ngtcp2
+            // already pass both.
+            "-DHAVE_ARPA_INET_H",
+            "-DHAVE_NETINET_IN_H",
+        },
         .files = &.{
             "nghttp3_rcbuf.c",    "nghttp3_mem.c",           "nghttp3_str.c",
             "nghttp3_conv.c",     "nghttp3_buf.c",           "nghttp3_ringbuf.c",
